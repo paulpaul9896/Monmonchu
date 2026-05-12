@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "Expense": {
+      "title": "Expense Record",
+      "description": "A single expense or income record",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "type": { "type": "string", "enum": ["expense", "income"] },
+        "dateStr": { "type": "string" },
+        "remark": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["amount", "category", "type", "dateStr", "userId"]
+    },
+    "Recurring": {
+      "title": "Recurring Transaction",
+      "description": "Monthly or yearly subscriptions/income",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "amount": { "type": "number" },
+        "freq": { "type": "string", "enum": ["monthly", "yearly"] },
+        "type": { "type": "string", "enum": ["expense", "income"] },
+        "date": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "amount", "freq", "type", "userId"]
+    },
+    "SplitProject": {
+      "title": "Split Bill Project",
+      "description": "A project for splitting bills among members",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "members": { "type": "array", "items": { "type": "string" } },
+        "items": { "type": "array" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "members", "createdBy"]
+    }
+  },
+  "firestore": {
+    "expenses": {
+      "schema": "Expense",
+      "description": "Individual transaction records"
+    },
+    "recurring": {
+      "schema": "Recurring",
+      "description": "Recurring transaction records"
+    },
+    "split_projects": {
+      "schema": "SplitProject",
+      "description": "Collaborative split bill projects"
+    }
+  }
+}

@@ -1,0 +1,61 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() { return request.auth != null; }
+    function isVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isOwner(data) { return data.userId == request.auth.uid; }
+    function isAdmin() { return isVerified() && request.auth.token.email == 'paulpaul9896@gmail.com'; }
+
+    // Validation Blueprints
+    function isValidExpense(data) {
+      return data.amount is number && data.amount >= 0 &&
+             data.category is string && data.category.size() <= 50 &&
+             data.type in ['expense', 'income'] &&
+             data.dateStr is string && data.dateStr.size() <= 50 &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidRecurring(data) {
+      return data.name is string && data.name.size() <= 100 &&
+             data.amount is number && data.amount >= 0 &&
+             data.freq in ['monthly', 'yearly'] &&
+             data.type in ['expense', 'income'] &&
+             data.userId == request.auth.uid;
+    }
+
+    // Rules
+    match /expenses/{expenseId} {
+      allow read: if isSignedIn() && isOwner(existing());
+      allow create: if isSignedIn() && isValidExpense(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && isOwner(existing()) && isValidExpense(incoming()) &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && isOwner(existing());
+    }
+
+    match /recurring/{itemId} {
+      allow read: if isSignedIn() && isOwner(existing());
+      allow create: if isSignedIn() && isValidRecurring(incoming());
+      allow update: if isSignedIn() && isOwner(existing()) && isValidRecurring(incoming()) &&
+                    incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && isOwner(existing());
+    }
+
+    match /split_projects/{projectId} {
+      // Split projects are collaborative. If you have the link/ID, you can read/edit items.
+      allow read: if isSignedIn(); 
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && incoming().createdBy == existing().createdBy;
+      allow delete: if isSignedIn() && (existing().createdBy == request.auth.uid || isAdmin());
+    }
+  }
+}
