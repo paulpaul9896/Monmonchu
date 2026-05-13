@@ -73,8 +73,7 @@ export const Dashboard: React.FC = () => {
 
     const q = query(
       collection(db, 'expenses'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      where('userId', '==', user.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -82,6 +81,12 @@ export const Dashboard: React.FC = () => {
         id: doc.id,
         ...doc.data()
       })) as Transaction[];
+      // Sort on client side to avoid missing index error
+      data.sort((a, b) => {
+        const dateA = (a as any).createdAt && typeof (a as any).createdAt.toMillis === 'function' ? (a as any).createdAt.toMillis() : 0;
+        const dateB = (b as any).createdAt && typeof (b as any).createdAt.toMillis === 'function' ? (b as any).createdAt.toMillis() : 0;
+        return dateB - dateA;
+      });
       setTransactions(data);
       setLoading(false);
     }, (error) => {

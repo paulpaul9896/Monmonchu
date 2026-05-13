@@ -13,7 +13,7 @@ export const Settings: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [lastSync, setLastSync] = useState<string>('未同步');
 
-  const appVersion = '1.1.3';
+  const appVersion = '1.1.5';
 
   useEffect(() => {
     const fetchLastSync = async () => {
@@ -21,13 +21,17 @@ export const Settings: React.FC = () => {
       try {
         const q = query(
           collection(db, 'expenses'),
-          where('userId', '==', user.uid),
-          orderBy('createdAt', 'desc'),
-          limit(1)
+          where('userId', '==', user.uid)
         );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
-          const latest = snapshot.docs[0].data();
+          const docs = snapshot.docs.map(d => d.data());
+          docs.sort((a, b) => {
+            const dateA = a.createdAt && typeof a.createdAt.toMillis === 'function' ? a.createdAt.toMillis() : 0;
+            const dateB = b.createdAt && typeof b.createdAt.toMillis === 'function' ? b.createdAt.toMillis() : 0;
+            return dateB - dateA;
+          });
+          const latest = docs[0];
           if (latest.createdAt) {
             setLastSync(latest.createdAt.toDate().toLocaleString('zh-HK'));
           }
