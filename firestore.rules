@@ -51,10 +51,16 @@ service cloud.firestore {
     }
 
     match /split_projects/{projectId} {
-      // Split projects are collaborative. If you have the link/ID, you can read/edit items.
-      allow read: if isSignedIn(); 
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && incoming().createdBy == existing().createdBy;
+      // Users can only read/write if they are in the authorizedUsers list
+      allow read: if isSignedIn() && request.auth.uid in resource.data.authorizedUsers;
+      allow create: if isSignedIn() && incoming().authorizedUsers == [request.auth.uid] && incoming().createdBy == request.auth.uid;
+      allow update: if isSignedIn() && (
+        request.auth.uid in resource.data.authorizedUsers || 
+        // Allow joining by adding self to authorizedUsers
+        (incoming().authorizedUsers.hasAll(existing().authorizedUsers) && 
+         incoming().authorizedUsers.size() == existing().authorizedUsers.size() + 1 &&
+         request.auth.uid in incoming().authorizedUsers)
+      );
       allow delete: if isSignedIn() && (existing().createdBy == request.auth.uid || isAdmin());
     }
   }
