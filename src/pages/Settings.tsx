@@ -13,7 +13,7 @@ export const Settings: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [lastSync, setLastSync] = useState<string>('未同步');
 
-  const appVersion = '1.1.7';
+  const appVersion = '1.1.8';
 
   useEffect(() => {
     const fetchLastSync = async () => {
