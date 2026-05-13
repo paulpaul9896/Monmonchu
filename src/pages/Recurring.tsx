@@ -37,6 +37,8 @@ export const Recurring: React.FC = () => {
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as RecurringItem[]);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'recurring', user);
     });
     return unsubscribe;
   }, [user]);

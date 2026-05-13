@@ -47,6 +47,8 @@ export const SplitBill: React.FC = () => {
         const updated = data.find(p => p.id === activeProject.id);
         if (updated) setActiveProject(updated);
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'split_projects', user);
     });
     return unsubscribe;
   }, [user, activeProject?.id]);
