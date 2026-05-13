@@ -3,8 +3,11 @@ import { collection, query, onSnapshot, addDoc, serverTimestamp, deleteDoc, doc,
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType, cn } from '../lib/utils';
-import { Users, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Info, Pencil, QrCode, Copy, ChevronLeft, ChevronRight, Calendar as CalendarIcon, X } from 'lucide-react';
+import { Users, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Info, Pencil, QrCode, Copy, ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Scan, Globe, TrendingUp } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
+import { format, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek, subMonths, addMonths } from 'date-fns';
+import { zhHK } from 'date-fns/locale';
 
 interface SplitItem {
   id: string;
@@ -13,6 +16,9 @@ interface SplitItem {
   payer: string;
   participants: string[];
   date: string;
+  originalAmount?: number;
+  originalCurrency?: string;
+  exchangeRate?: number;
 }
 
 interface SplitProject {
@@ -33,6 +39,7 @@ export const SplitBill: React.FC = () => {
   const [newMembers, setNewMembers] = useState(['', '']);
   const [viewTab, setViewTab] = useState<'overview' | 'details'>('overview');
   const [showQR, setShowQR] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   
   // Join functionality
   const [joinId, setJoinId] = useState('');
@@ -47,13 +54,56 @@ export const SplitBill: React.FC = () => {
   const [itemDate, setItemDate] = useState(new Date().toISOString().split('T')[0]);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
+  // Currency features
+  const defaultRates: Record<string, number> = {
+    HKD: 1,
+    JPY: 19.95,
+    USD: 0.128,
+    TWD: 4.14,
+    EUR: 0.118,
+    CNY: 0.92,
+    KRW: 175
+  };
+  const [rates, setRates] = useState<Record<string, number>>(defaultRates);
+  const [fromCurrency, setFromCurrency] = useState('JPY');
+  const [originalAmount, setOriginalAmount] = useState('');
+  const [showExchange, setShowExchange] = useState(false);
+
+  useEffect(() => {
+    if (activeProject && !editingItemId && itemParts.length === 0) {
+      setItemParts(activeProject.members);
+    }
+  }, [activeProject?.id, editingItemId]);
+
+  const currencies = [
+    { code: 'HKD', name: '港幣', flag: '🇭🇰' },
+    { code: 'JPY', name: '日圓', flag: '🇯🇵' },
+    { code: 'USD', name: '美元', flag: '🇺🇸' },
+    { code: 'TWD', name: '台幣', flag: '🇹🇼' },
+    { code: 'EUR', name: '歐元', flag: '🇪🇺' },
+    { code: 'CNY', name: '人民幣', flag: '🇨🇳' },
+    { code: 'KRW', name: '韓圓', flag: '🇰🇷' },
+  ];
+
   // Calendar state
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
 
   useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/HKD')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.rates) {
+          setRates(data.rates);
+        }
+      })
+      .catch(err => {
+        console.error('Fetch rates failed, using defaults', err);
+      });
+  }, []);
+
+  useEffect(() => {
     if (!user) return;
-    // Only fetch projects the user is authorized for
     const q = query(collection(db, 'split_projects'), where('authorizedUsers', 'array-contains', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as SplitProject[];
@@ -67,6 +117,26 @@ export const SplitBill: React.FC = () => {
     });
     return unsubscribe;
   }, [user, activeProject?.id]);
+
+  useEffect(() => {
+    if (showScanner) {
+      // Small delay to ensure div is in DOM
+      const timer = setTimeout(() => {
+        const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+        scanner.render((result) => {
+          setJoinId(result);
+          setShowScanner(false);
+          scanner.clear();
+        }, (error) => {
+          // console.log(error);
+        });
+        return () => {
+          scanner.clear().catch(console.error);
+        };
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [showScanner]);
 
   const handleCreateProject = async () => {
     if (!user || !newName) return;
@@ -92,31 +162,61 @@ export const SplitBill: React.FC = () => {
     }
   };
 
+  const calculateConverted = () => {
+    if (!originalAmount || !rates[fromCurrency]) return '';
+    const rate = 1 / rates[fromCurrency];
+    return (parseFloat(originalAmount) * rate).toFixed(2);
+  };
+
+  const applyConversion = () => {
+    const converted = calculateConverted();
+    console.log('Converted amount:', converted);
+    if (converted) {
+      setItemAmount(converted);
+      // We also keep the original amount so it stays in the form and is saved in the item
+      setShowExchange(false);
+    } else {
+      alert('無法計算，請檢查輸入或網路連接');
+    }
+  };
+
   const handleAddItem = async () => {
-    if (!activeProject || !itemAmount || !itemPayer || itemParts.length === 0) return;
+    if (!activeProject) return;
+    
+    if (!itemAmount || parseFloat(itemAmount) <= 0) {
+      alert('請輸入有效金額');
+      return;
+    }
+    if (!itemPayer) {
+      alert('請選擇支付人');
+      return;
+    }
+    if (itemParts.length === 0) {
+      alert('請選擇參與成員');
+      return;
+    }
     
     let updatedItems = [...activeProject.items];
+    const newItemBase = {
+      desc: itemDesc || '共同開支',
+      amount: parseFloat(itemAmount),
+      payer: itemPayer,
+      participants: itemParts,
+      date: itemDate,
+      originalAmount: originalAmount !== '' ? parseFloat(originalAmount) : undefined,
+      originalCurrency: originalAmount !== '' ? fromCurrency : undefined,
+      exchangeRate: originalAmount !== '' ? (1 / rates[fromCurrency]) : undefined,
+    };
 
     if (editingItemId) {
       updatedItems = updatedItems.map(item => 
-        item.id === editingItemId ? {
-          ...item,
-          desc: itemDesc || '共同開支',
-          amount: parseFloat(itemAmount),
-          payer: itemPayer,
-          participants: itemParts,
-          date: itemDate,
-        } : item
+        item.id === editingItemId ? { ...item, ...newItemBase } : item
       );
     } else {
       updatedItems.push({
-        id: Date.now().toString(),
-        desc: itemDesc || '共同開支',
-        amount: parseFloat(itemAmount),
-        payer: itemPayer,
-        participants: itemParts,
-        date: itemDate,
-      });
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+        ...newItemBase
+      } as SplitItem);
     }
 
     try {
@@ -127,6 +227,7 @@ export const SplitBill: React.FC = () => {
       setItemAmount('');
       setItemPayer('');
       setItemParts([]);
+      setOriginalAmount('');
       setEditingItemId(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'split_projects', user);
@@ -140,6 +241,8 @@ export const SplitBill: React.FC = () => {
     setItemPayer(item.payer);
     setItemParts(item.participants);
     setItemDate(item.date);
+    setOriginalAmount(item.originalAmount?.toString() || '');
+    setFromCurrency(item.originalCurrency || 'HKD');
     setViewTab('details');
     window.scrollTo({ top: 300, behavior: 'smooth' });
   };
@@ -343,9 +446,51 @@ export const SplitBill: React.FC = () => {
                 
                 <div className="flex items-center justify-between text-[10px] font-black text-emerald-500 uppercase tracking-widest px-2">
                   <span>金額 (HKD)</span>
-                  <span className="flex items-center gap-1">🌍 匯率轉換</span>
+                  <button 
+                    onClick={() => setShowExchange(!showExchange)}
+                    className={cn(
+                      "flex items-center gap-1 px-3 py-1 rounded-full transition-all",
+                      showExchange ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-600"
+                    )}
+                  >
+                    <Globe className="w-3 h-3" /> 匯率轉換
+                  </button>
                   <span>墊付人</span>
                 </div>
+
+                {showExchange && (
+                  <div className="p-6 bg-white border-2 border-emerald-100 rounded-3xl space-y-4 animate-in zoom-in-95 duration-200">
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        type="number"
+                        placeholder="外幣金額"
+                        value={originalAmount}
+                        onChange={(e) => setOriginalAmount(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none font-bold text-center"
+                      />
+                      <select
+                        value={fromCurrency}
+                        onChange={(e) => setFromCurrency(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none font-bold text-center"
+                      >
+                        {currencies.map(c => <option key={c.code} value={c.code}>{c.flag} {c.code}</option>)}
+                      </select>
+                    </div>
+                    {originalAmount && (
+                      <div className="flex items-center justify-between px-2">
+                        <span className="text-[10px] font-black text-slate-300 uppercase">估算結果:</span>
+                        <span className="text-sm font-black text-emerald-600">≈ HKD {calculateConverted()}</span>
+                      </div>
+                    )}
+                    <button 
+                      type="button"
+                      onClick={applyConversion}
+                      className="w-full py-3 bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-100 active:scale-95 transition-all"
+                    >
+                      套用金額
+                    </button>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <input
@@ -424,6 +569,12 @@ export const SplitBill: React.FC = () => {
                       <div className="space-y-1">
                         <p className="font-black text-slate-800">{item.desc}</p>
                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{item.payer} 付款 • {item.participants.join(', ')}參與</p>
+                        {item.originalAmount && (
+                          <div className="flex items-center gap-1 text-[8px] font-black text-emerald-500 uppercase bg-emerald-50 px-2 py-0.5 rounded-full w-fit mt-1">
+                            <Globe className="w-2 h-2" />
+                            <span>{item.originalCurrency} {item.originalAmount.toFixed(2)} (匯率: {item.exchangeRate?.toFixed(4)})</span>
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-4">
                         <p className="font-black text-slate-900 tabular-nums">HK${item.amount.toFixed(2)}</p>
@@ -513,7 +664,26 @@ export const SplitBill: React.FC = () => {
 
       {showJoin && (
         <div className="bg-slate-800 rounded-[40px] p-8 text-white shadow-xl space-y-6 animate-in zoom-in-95 duration-300">
-          <h3 className="text-xs font-black uppercase tracking-widest text-emerald-400 italic text-center">加入現有計畫</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-black uppercase tracking-widest text-emerald-400 italic">加入現有計畫</h3>
+            <button 
+              onClick={() => setShowScanner(!showScanner)}
+              className={cn(
+                "p-2 rounded-xl transition-all",
+                showScanner ? "bg-rose-500 text-white" : "bg-white/10 text-emerald-400"
+              )}
+            >
+              <Scan className="w-4 h-4" />
+            </button>
+          </div>
+
+          {showScanner && (
+            <div className="overflow-hidden rounded-3xl bg-white p-2">
+              <div id="reader" className="w-full"></div>
+              <p className="text-[8px] font-bold text-slate-400 text-center py-2 uppercase tracking-widest">請對準計畫 QR Code</p>
+            </div>
+          )}
+
           <div className="space-y-3">
             <input
               type="text"
@@ -634,68 +804,61 @@ const Calendar: React.FC<{
   setSelectedDate: (d: Date) => void;
   items: SplitItem[];
 }> = ({ currentMonth, setCurrentMonth, selectedDate, setSelectedDate, items }) => {
-  const daysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
-  const firstDayOfMonth = (month: number, year: number) => new Date(year, month, 1).getDay();
-  
-  const monthNames = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
-  
-  const days: (number | null)[] = [];
-  const startDay = firstDayOfMonth(currentMonth.getMonth(), currentMonth.getFullYear());
-  const totalDays = daysInMonth(currentMonth.getMonth(), currentMonth.getFullYear());
+  const monthStart = startOfMonth(currentMonth);
+  const monthEnd = endOfMonth(monthStart);
+  const startDate = startOfWeek(monthStart);
+  const endDate = endOfWeek(monthEnd);
+  const calendarDays = eachDayOfInterval({ start: startDate, end: endDate });
 
-  for (let i = 0; i < startDay; i++) days.push(null);
-  for (let i = 1; i <= totalDays; i++) days.push(i);
-
-  const isToday = (day: number) => {
-    const today = new Date();
-    return today.getDate() === day && 
-           today.getMonth() === currentMonth.getMonth() && 
-           today.getFullYear() === currentMonth.getFullYear();
-  };
-
-  const hasItems = (day: number) => {
-    const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return items.some(item => item.date === dateStr);
+  const getDayTotal = (day: Date) => {
+    const ds = format(day, 'yyyy-MM-dd');
+    const total = items.filter(t => t.date === ds).reduce((acc, t) => acc + t.amount, 0);
+    return total;
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 bg-slate-50 rounded-xl text-slate-400 hover:text-emerald-500">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <div className="font-black text-slate-900 flex items-center gap-2">
-          <span className="text-lg">{currentMonth.getFullYear()}年</span>
-          <span className="text-slate-300">/</span>
-          <span className="text-lg">{monthNames[currentMonth.getMonth()]}</span>
-        </div>
-        <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 bg-slate-50 rounded-xl text-slate-400 hover:text-emerald-500">
-          <ChevronRight className="w-4 h-4" />
-        </button>
+      <div className="flex items-center justify-between px-2">
+        <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-2 text-slate-400 hover:text-slate-900 transition-colors">❮</button>
+        <h3 className="font-black text-slate-900 uppercase tracking-widest text-[11px] font-mono">
+          {format(currentMonth, 'MMMM yyyy', { locale: zhHK })}
+        </h3>
+        <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-2 text-slate-400 hover:text-slate-900 transition-colors">❯</button>
       </div>
-
-      <div className="grid grid-cols-7 gap-y-4">
-        {["日", "一", "二", "三", "四", "五", "六"].map(d => (
-          <div key={d} className="text-[10px] font-black text-slate-300 text-center uppercase tracking-widest">{d}</div>
+      
+      <div className="grid grid-cols-7 gap-1">
+        {['日', '一', '二', '三', '四', '五', '六'].map(d => (
+          <div key={d} className="text-center text-[10px] font-black text-slate-300 py-2">{d}</div>
         ))}
-        {days.map((day, idx) => (
-          <div key={idx} className="flex flex-col items-center justify-center min-h-[40px]">
-            {day !== null ? (
-              <button
-                onClick={() => setSelectedDate(new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day))}
-                className={cn(
-                  "w-10 h-10 rounded-xl font-bold transition-all relative flex flex-col items-center justify-center",
-                  isToday(day) ? "bg-emerald-500 text-white shadow-lg shadow-emerald-200" : 
-                  hasItems(day) ? "border-2 border-emerald-500 text-emerald-600" :
-                  "text-slate-600 hover:bg-slate-50"
-                )}
-              >
-                {day}
-                {hasItems(day) && !isToday(day) && <div className="absolute -bottom-1 w-1 h-1 bg-emerald-500 rounded-full" />}
-              </button>
-            ) : null}
-          </div>
-        ))}
+        {calendarDays.map((day, i) => {
+          const isSelected = isSameDay(day, selectedDate);
+          const isToday = isSameDay(day, new Date());
+          const total = getDayTotal(day);
+          const isCurrentMonth = day.getMonth() === currentMonth.getMonth();
+          
+          return (
+            <button
+              key={i}
+              onClick={() => setSelectedDate(day)}
+              className={cn(
+                "relative aspect-square flex flex-col items-center justify-between py-1.5 rounded-2xl transition-all border border-transparent",
+                isSelected ? "bg-emerald-500 text-white shadow-lg shadow-emerald-100 border-emerald-400" : "hover:bg-slate-50",
+                !isCurrentMonth && !isSelected && "opacity-20",
+                isToday && !isSelected && "border-emerald-200"
+              )}
+            >
+              <span className="text-[11px] font-black leading-none">{format(day, 'd')}</span>
+              {total !== 0 && (
+                <span className={cn(
+                  "text-[8px] font-black leading-[1] truncate w-[90%] text-center",
+                  isSelected ? "text-white" : "text-rose-400"
+                )}>
+                  {Math.round(total)}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
