@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, onSnapshot, addDoc, serverTimestamp, deleteDoc, doc, updateDoc, arrayUnion, getDoc, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType, cn } from '../lib/utils';
 import { Users, Plus, Trash2, ArrowRight, CheckCircle2, UserPlus, Info, Pencil, QrCode, Copy, ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Scan, Globe, TrendingUp } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+// 只用 Html5Qrcode（非 Scanner wrapper），方便直接指定後置鏡頭
+import { Html5Qrcode } from 'html5-qrcode';
 import { format, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek, subMonths, addMonths } from 'date-fns';
 import { zhHK } from 'date-fns/locale';
 
@@ -41,10 +42,12 @@ export const SplitBill: React.FC = () => {
   const [showQR, setShowQR] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   
-  // Join functionality
+  // 加入計畫相關 state
   const [joinId, setJoinId] = useState('');
   const [joinPassword, setJoinPassword] = useState('');
   const [showJoin, setShowJoin] = useState(false);
+  // 儲存 Html5Qrcode 實例，方便在 useEffect 清理時停止鏡頭
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   // Add Item form state
   const [itemDesc, setItemDesc] = useState('');
@@ -119,23 +122,45 @@ export const SplitBill: React.FC = () => {
   }, [user, activeProject?.id]);
 
   useEffect(() => {
-    if (showScanner) {
-      // Small delay to ensure div is in DOM
-      const timer = setTimeout(() => {
-        const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
-        scanner.render((result) => {
-          setJoinId(result);
-          setShowScanner(false);
-          scanner.clear();
-        }, (error) => {
-          // console.log(error);
-        });
-        return () => {
-          scanner.clear().catch(console.error);
-        };
-      }, 100);
-      return () => clearTimeout(timer);
+    // 當關閉掃描器時，停止並釋放鏡頭資源
+    if (!showScanner) {
+      if (scannerRef.current) {
+        scannerRef.current.stop().catch(() => {});
+        scannerRef.current = null;
+      }
+      return;
     }
+
+    // 小延遲確保 div#reader 已掛載到 DOM
+    const timer = setTimeout(() => {
+      const qr = new Html5Qrcode('reader');
+      scannerRef.current = qr;
+
+      const onSuccess = (decodedText: string) => {
+        // 掃描成功：填入計畫 ID 並關閉鏡頭
+        setJoinId(decodedText);
+        setShowScanner(false);
+      };
+
+      // 先嘗試強制後置鏡頭（{ exact: 'environment' }），失敗才用一般 'environment'
+      qr.start(
+        { facingMode: { exact: 'environment' } },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        onSuccess,
+        () => {}
+      ).catch(() => {
+        qr.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          onSuccess,
+          () => {}
+        ).catch((err: unknown) => {
+          console.error('QR 掃描器啟動失敗', err);
+        });
+      });
+    }, 150);
+
+    return () => clearTimeout(timer);
   }, [showScanner]);
 
   const handleCreateProject = async () => {
@@ -223,11 +248,15 @@ export const SplitBill: React.FC = () => {
       await updateDoc(doc(db, 'split_projects', activeProject.id), {
         items: updatedItems
       });
+      // 重設表單，itemParts 預設恢復全選所有成員（方便連續新增）
       setItemDesc('');
       setItemAmount('');
       setItemPayer('');
-      setItemParts([]);
+      setItemParts(activeProject.members);
       setOriginalAmount('');
+      setShowExchange(false);
+      // 日期重設為今日
+      setItemDate(new Date().toLocaleDateString('en-CA'));
       setEditingItemId(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'split_projects', user);
@@ -666,21 +695,26 @@ export const SplitBill: React.FC = () => {
         <div className="bg-slate-800 rounded-[40px] p-8 text-white shadow-xl space-y-6 animate-in zoom-in-95 duration-300">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-black uppercase tracking-widest text-emerald-400 italic">加入現有計畫</h3>
+            {/* 一按即開後置鏡頭掃 QR Code */}
             <button 
               onClick={() => setShowScanner(!showScanner)}
               className={cn(
-                "p-2 rounded-xl transition-all",
-                showScanner ? "bg-rose-500 text-white" : "bg-white/10 text-emerald-400"
+                "flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all text-[10px] font-black uppercase tracking-widest",
+                showScanner ? "bg-rose-500 text-white" : "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
               )}
             >
               <Scan className="w-4 h-4" />
+              {showScanner ? '關閉鏡頭' : '掃 QR Code'}
             </button>
           </div>
 
           {showScanner && (
-            <div className="overflow-hidden rounded-3xl bg-white p-2">
-              <div id="reader" className="w-full"></div>
-              <p className="text-[8px] font-bold text-slate-400 text-center py-2 uppercase tracking-widest">請對準計畫 QR Code</p>
+            <div className="overflow-hidden rounded-3xl bg-white p-3 space-y-2">
+              {/* Html5Qrcode 會將鏡頭畫面渲染到此 div */}
+              <div id="reader" className="w-full rounded-2xl overflow-hidden"></div>
+              <p className="text-[9px] font-bold text-slate-400 text-center uppercase tracking-widest">
+                📷 請將後置鏡頭對準 QR Code
+              </p>
             </div>
           )}
 
@@ -848,12 +882,17 @@ const Calendar: React.FC<{
               )}
             >
               <span className="text-[11px] font-black leading-none">{format(day, 'd')}</span>
+              {/* 支出金額：超過 1000 顯示縮寫，避免截斷 */}
               {total !== 0 && (
                 <span className={cn(
-                  "text-[8px] font-black leading-[1] truncate w-[90%] text-center",
-                  isSelected ? "text-white" : "text-rose-400"
+                  "text-[7px] font-black leading-tight text-center w-full px-0.5",
+                  isSelected ? "text-white/90" : "text-rose-400"
                 )}>
-                  {Math.round(total)}
+                  {total >= 10000
+                    ? `${(total / 1000).toFixed(0)}k`
+                    : total >= 1000
+                    ? `${(total / 1000).toFixed(1)}k`
+                    : Math.round(total)}
                 </span>
               )}
             </button>

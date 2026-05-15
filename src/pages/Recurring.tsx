@@ -4,6 +4,11 @@ import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType, cn } from '../lib/utils';
 import { Repeat, Trash2, Calendar, DollarSign, ArrowUpCircle, ArrowDownCircle, Pencil } from 'lucide-react';
+// 用 date-fns format 取本地日期，避免 UTC 偏移導致日期錯誤
+import { format } from 'date-fns';
+
+// 取今日本地日期字串（YYYY-MM-DD）
+const todayStr = () => format(new Date(), 'yyyy-MM-dd');
 
 interface RecurringItem {
   id: string;
@@ -22,7 +27,8 @@ export const Recurring: React.FC = () => {
   const [amount, setAmount] = useState('');
   const [freq, setFreq] = useState<'monthly' | 'yearly'>('monthly');
   const [type, setType] = useState<'expense' | 'income'>('expense');
-  const [date, setDate] = useState('');
+  // 預設選今日，避免日期欄位顯示空白（會令手機版 date input 出現錯誤提示）
+  const [date, setDate] = useState<string>(todayStr);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // Salary state
@@ -61,6 +67,8 @@ export const Recurring: React.FC = () => {
 
   const handleAdd = async () => {
     if (!user || !name || !amount) return;
+    // 日期欄位為空時用本地今日，避免 UTC 偏移問題
+    const saveDate = date || todayStr();
     try {
       if (editingId) {
         const itemRef = doc(db, 'recurring', editingId);
@@ -69,7 +77,7 @@ export const Recurring: React.FC = () => {
           amount: parseFloat(amount),
           freq,
           type,
-          date: date || new Date().toISOString().split('T')[0],
+          date: saveDate,
         });
         setEditingId(null);
       } else {
@@ -78,13 +86,15 @@ export const Recurring: React.FC = () => {
           amount: parseFloat(amount),
           freq,
           type,
-          date: date || new Date().toISOString().split('T')[0],
+          date: saveDate,
           userId: user.uid,
           createdAt: serverTimestamp(),
         });
       }
+      // 保存後重設所有欄位，日期重設為今日
       setName('');
       setAmount('');
+      setDate(todayStr());
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'recurring', user);
     }
@@ -97,7 +107,8 @@ export const Recurring: React.FC = () => {
     setAmount(item.amount.toString());
     setFreq(item.freq);
     setType(item.type);
-    setDate(item.date);
+    // 如項目日期為空則用今日，避免 date input 顯示錯誤
+    setDate(item.date || todayStr());
   };
 
   const handleDelete = async (id: string) => {
@@ -200,6 +211,7 @@ export const Recurring: React.FC = () => {
               setEditingId(null);
               setName('');
               setAmount('');
+              setDate(todayStr());
             }} className="text-[10px] font-bold text-slate-400 hover:text-slate-900">
               取消
             </button>
@@ -235,7 +247,7 @@ export const Recurring: React.FC = () => {
           </button>
         </div>
 
-        <div className="space-y-4">
+          <div className="space-y-4">
           <input
             type="text"
             placeholder="項目名稱 (例如: Netflix)"
@@ -243,19 +255,24 @@ export const Recurring: React.FC = () => {
             onChange={(e) => setName(e.target.value)}
             className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-amber-500 transition-all font-bold text-sm text-center"
           />
-          <div className="grid grid-cols-2 gap-4">
-            <input
-              type="number"
-              placeholder="金額"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-amber-500 transition-all font-black text-lg text-center"
-            />
+          {/* 金額欄位單獨一行，更易輸入 */}
+          <input
+            type="number"
+            placeholder="金額"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-amber-500 transition-all font-black text-lg text-center"
+          />
+          {/* 日期欄位改為全寬，手機版 date picker 更易操作 */}
+          <div className="space-y-1">
+            <label className="text-[9px] font-black text-slate-300 uppercase tracking-widest ml-1">
+              生效日期
+            </label>
             <input
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-amber-500 transition-all font-bold text-xs"
+              className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-amber-500 transition-all font-bold text-sm text-center"
             />
           </div>
           <button

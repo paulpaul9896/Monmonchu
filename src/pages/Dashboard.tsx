@@ -247,21 +247,31 @@ export const Dashboard: React.FC = () => {
       <div className="bg-slate-900 rounded-[40px] p-10 text-white shadow-2xl relative overflow-hidden group">
         <div className="absolute top-0 right-0 w-64 h-64 bg-sky-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-sky-500/20 transition-all duration-700 pointer-events-none z-0" />
         <div className="relative z-20">
-          <div className="flex justify-between items-start mb-6">
-            <div className="space-y-1">
+          {/* 手機版分兩行排列，避免「設定預算」按鈕令畫面變型 */}
+          <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:justify-between sm:items-start">
+            <div className="space-y-1 min-w-0">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">淨資產變動 (HKD)</p>
-              <h2 className="text-5xl font-black tracking-tighter tabular-nums">
+              <h2 className="text-5xl font-black tracking-tighter tabular-nums break-all">
                 ${totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </h2>
             </div>
             {isEditingBudget ? (
-              <div className="flex items-center gap-2 bg-white/10 p-1 rounded-2xl border border-white/10 animate-in zoom-in-95 duration-200">
+              /* 編輯預算時的輸入框 */
+              <div className="flex items-center gap-2 bg-white/10 p-1 rounded-2xl border border-white/10 animate-in zoom-in-95 duration-200 self-start">
                 <input
                   type="number"
                   value={tempBudget}
                   onChange={(e) => setTempBudget(e.target.value)}
-                  className="w-24 bg-transparent text-white font-black text-center text-xs outline-none"
+                  className="w-28 bg-transparent text-white font-black text-center text-sm outline-none px-2"
                   autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const b = parseFloat(tempBudget) || 0;
+                      setMonthlyBudget(b);
+                      localStorage.setItem('monmon_budget', b.toString());
+                      setIsEditingBudget(false);
+                    }
+                  }}
                 />
                 <button 
                   onClick={() => {
@@ -274,6 +284,12 @@ export const Dashboard: React.FC = () => {
                 >
                   ✓
                 </button>
+                <button
+                  onClick={() => setIsEditingBudget(false)}
+                  className="p-2 bg-white/10 rounded-xl text-[10px] font-black text-slate-400"
+                >
+                  ✕
+                </button>
               </div>
             ) : (
               <button 
@@ -281,7 +297,7 @@ export const Dashboard: React.FC = () => {
                   setTempBudget(monthlyBudget.toString());
                   setIsEditingBudget(true);
                 }}
-                className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer active:scale-95 shadow-lg border border-white/5 relative z-30"
+                className="self-start px-4 py-2 bg-white/10 hover:bg-white/20 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer active:scale-95 shadow-lg border border-white/5 relative z-30 whitespace-nowrap"
               >
                 設定預算
               </button>
@@ -574,22 +590,27 @@ export const Dashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+            {/* 右側：金額 + 編輯/刪除按鈕（桌面版 hover 顯示，手機版永遠可見） */}
             <div className="flex items-center gap-2">
               <p className={cn("font-black text-lg tabular-nums", t.type === 'income' ? 'text-emerald-500' : 'text-slate-900')}>
                 {t.type === 'income' ? '+' : ''}${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </p>
-              <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+              <div className="flex flex-col gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-all">
                 <button
                   onClick={() => handleEdit(t)}
-                  className="p-2 bg-slate-50 text-slate-300 hover:text-sky-500 rounded-lg"
+                  className="p-2 bg-slate-50 text-slate-400 hover:text-sky-500 active:text-sky-500 rounded-lg"
+                  title="編輯"
                 >
-                  <Pencil className="w-3 h-3" />
+                  <Pencil className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  onClick={() => handleDelete(t.id)}
-                  className="p-2 bg-slate-50 text-slate-300 hover:text-rose-500 rounded-lg"
+                  onClick={() => {
+                    if (confirm('確定刪除此紀錄？')) handleDelete(t.id);
+                  }}
+                  className="p-2 bg-slate-50 text-slate-400 hover:text-rose-500 active:text-rose-500 rounded-lg"
+                  title="刪除"
                 >
-                  <Trash2 className="w-3 h-3" />
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
