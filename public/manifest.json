@@ -1,0 +1,23 @@
+{
+  "name": "MonMonChu",
+  "short_name": "MonMonChu",
+  "description": "Personal finance tracker",
+  "start_url": "/Monmonchu/",
+  "display": "standalone",
+  "background_color": "#F2F2F7",
+  "theme_color": "#F2F2F7",
+  "icons": [
+    {
+      "src": "./logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
