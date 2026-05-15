@@ -28,13 +28,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
         <div className="max-w-2xl mx-auto px-5 h-[60px] flex items-center justify-between">
           <button
             onClick={() => setActiveTab('expenses')}
-            className="flex items-center gap-2.5 active:opacity-70 transition-opacity"
+            className="flex items-center active:opacity-70 transition-opacity"
           >
-            {/* App icon */}
-            <div className="w-9 h-9 bg-gradient-to-br from-sky-400 to-indigo-600 rounded-[10px] flex items-center justify-center shadow-sm">
-              <span className="text-white text-base">💸</span>
-            </div>
-            <span className="text-[17px] font-bold text-slate-900 tracking-tight">MonMonChu</span>
+            <img
+              src="/logo.png"
+              alt="MonMonChu"
+              className="h-10 w-auto object-contain"
+            />
           </button>
 
           <button
@@ -48,7 +48,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
       </header>
 
       {/* ── Main Content ── */}
-      <main className="flex-1 pt-[76px] pb-[100px] px-4 max-w-2xl mx-auto w-full">
+      <main className="flex-1 pt-[76px] pb-[100px] px-4 max-w-2xl mx-auto w-full overflow-x-hidden">
         {children}
       </main>
 
