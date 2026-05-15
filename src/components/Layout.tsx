@@ -31,7 +31,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
             className="flex items-center active:opacity-70 transition-opacity"
           >
             <img
-              src="/logo.png"
+              src={`${import.meta.env.BASE_URL}logo.png`}
               alt="MonMonChu"
               className="h-10 w-auto object-contain"
             />
