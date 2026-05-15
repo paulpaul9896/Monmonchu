@@ -1,108 +1,189 @@
-import React, { useState, useEffect } from 'react';
-import { Globe, ArrowRightLeft, RefreshCw, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { RefreshCw, ChevronDown, ArrowUpDown } from 'lucide-react';
+import { cn } from '../lib/utils';
+
+interface CurrencyInfo {
+  code: string;
+  name: string;
+  flag: string;
+  symbol: string;
+}
+
+const CURRENCIES: CurrencyInfo[] = [
+  { code: 'HKD', name: '港幣',   flag: '🇭🇰', symbol: 'HK$' },
+  { code: 'JPY', name: '日圓',   flag: '🇯🇵', symbol: '¥'   },
+  { code: 'USD', name: '美元',   flag: '🇺🇸', symbol: '$'   },
+  { code: 'EUR', name: '歐元',   flag: '🇪🇺', symbol: '€'   },
+  { code: 'CNY', name: '人民幣', flag: '🇨🇳', symbol: '¥'   },
+  { code: 'TWD', name: '台幣',   flag: '🇹🇼', symbol: 'NT$' },
+  { code: 'KRW', name: '韓圓',   flag: '🇰🇷', symbol: '₩'   },
+  { code: 'GBP', name: '英鎊',   flag: '🇬🇧', symbol: '£'   },
+  { code: 'SGD', name: '新加坡幣', flag: '🇸🇬', symbol: 'S$' },
+  { code: 'AUD', name: '澳元',   flag: '🇦🇺', symbol: 'A$'  },
+  { code: 'MYR', name: '馬來西亞令吉', flag: '🇲🇾', symbol: 'RM' },
+  { code: 'THB', name: '泰銖',   flag: '🇹🇭', symbol: '฿'   },
+];
+
+// 格式化換算結果數字
+const fmtResult = (n: number): string => {
+  if (n >= 100_000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (n >= 1_000)   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (n >= 1)       return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+};
 
 export const Currency: React.FC = () => {
-  const [rates, setRates] = useState<Record<string, number>>({});
-  const [from, setFrom] = useState('HKD');
-  const [to, setTo] = useState('JPY');
-  const [amount, setAmount] = useState('1000');
-  const [loading, setLoading] = useState(true);
+  const [rates, setRates]         = useState<Record<string, number>>({});
+  const [loading, setLoading]     = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const currencies = [
-    { code: 'HKD', name: '港幣', flag: '🇭🇰' },
-    { code: 'JPY', name: '日圓', flag: '🇯🇵', mult: 100 },
-    { code: 'USD', name: '美元', flag: '🇺🇸' },
-    { code: 'TWD', name: '台幣', flag: '🇹🇼', mult: 100 },
-    { code: 'EUR', name: '歐元', flag: '🇪🇺' },
-    { code: 'CNY', name: '人民幣', flag: '🇨🇳' },
-    { code: 'KRW', name: '韓圓', flag: '🇰🇷', mult: 1000 },
-  ];
+  // 基礎貨幣（用戶可點任何一行切換）
+  const [baseCurrency, setBaseCurrency] = useState('HKD');
+  const [baseAmount, setBaseAmount]     = useState('1000');
+  const [showPicker, setShowPicker]     = useState(false);
 
-  useEffect(() => {
+  // ── 拉匯率（以 HKD 為基準）──
+  const fetchRates = useCallback(() => {
+    setLoading(true);
     fetch('https://open.er-api.com/v6/latest/HKD')
-      .then(res => res.json())
-      .then(data => {
-        setRates(data.rates);
-        setLoading(false);
-      });
+      .then(r => r.json())
+      .then(d => {
+        if (d?.rates) { setRates(d.rates); setLastUpdated(new Date()); }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
-  const converted = amount && rates[from] && rates[to] 
-    ? (parseFloat(amount) / rates[from]) * rates[to] 
-    : 0;
+  useEffect(() => { fetchRates(); }, [fetchRates]);
+
+  // 計算任意貨幣 → HKD → 目標貨幣
+  const convert = (targetCode: string): number => {
+    if (!rates[baseCurrency] || !rates[targetCode]) return 0;
+    const amtNum = parseFloat(baseAmount) || 0;
+    // 先轉成 HKD，再轉目標
+    const inHKD = amtNum / rates[baseCurrency];
+    return inHKD * rates[targetCode];
+  };
+
+  // 點擊某行貨幣 → 設為基礎貨幣，保留當前換算值
+  const handleSelectBase = (code: string) => {
+    if (code === baseCurrency) return;
+    const converted = convert(code);
+    setBaseAmount(fmtResult(converted).replace(/,/g, ''));
+    setBaseCurrency(code);
+  };
+
+  const baseInfo = CURRENCIES.find(c => c.code === baseCurrency) ?? CURRENCIES[0];
+  const baseAmtNum = parseFloat(baseAmount) || 0;
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="bg-indigo-600 rounded-[40px] p-10 text-white shadow-2xl relative overflow-hidden group">
-         <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-         <h2 className="text-4xl font-black tracking-tighter mb-2">MonMonChu 匯率換算</h2>
-         <p className="text-xs font-bold text-indigo-100 opacity-80 italic">旅行必備，即時數據。</p>
-      </div>
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-      <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm space-y-8">
-        <div className="flex flex-col items-center gap-4">
-           <div className="w-full relative">
-             <input
-               type="number"
-               value={amount}
-               onChange={(e) => setAmount(e.target.value)}
-               className="w-full px-8 py-10 bg-slate-50 border-none rounded-[32px] text-5xl font-black text-center outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all tabular-nums"
-             />
-             <div className="absolute top-4 left-1/2 -translate-x-1/2">
-                <select
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  className="bg-white px-4 py-2 rounded-full text-xs font-black uppercase tracking-widest border border-slate-100 outline-none shadow-sm"
-                >
-                  {currencies.map(c => <option key={c.code} value={c.code}>{c.flag} {c.code}</option>)}
-                </select>
-             </div>
-           </div>
+      {/* ── Hero 輸入卡片（參考用戶截圖 Image 3 樣式）── */}
+      <div className="bg-white rounded-[24px] shadow-sm border border-black/[0.05] overflow-hidden">
 
-           <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-100 -my-4 z-10">
-              <ArrowRightLeft className="w-5 h-5 rotate-90" />
-           </div>
+        {/* 基礎貨幣輸入區 */}
+        <div className="p-5 pb-3">
+          {/* 貨幣選擇器按鈕 */}
+          <button
+            onClick={() => setShowPicker(!showPicker)}
+            className="flex items-center gap-2 mb-3 group"
+          >
+            <span className="text-xl">{baseInfo.flag}</span>
+            <span className="text-[15px] font-bold text-slate-800">{baseInfo.code}</span>
+            <span className="text-[13px] font-medium text-slate-400">{baseInfo.name}</span>
+            <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", showPicker && "rotate-180")} />
+          </button>
 
-           <div className="w-full relative">
-             <div className="w-full px-8 py-10 bg-indigo-50 rounded-[32px] text-5xl font-black text-center text-indigo-600 tabular-nums min-h-[140px] flex items-center justify-center">
-               {loading ? '...' : `$ ${converted.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
-             </div>
-             <div className="absolute top-4 left-1/2 -translate-x-1/2">
-                <select
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className="bg-white px-4 py-2 rounded-full text-xs font-black uppercase tracking-widest border border-slate-100 outline-none shadow-sm"
-                >
-                  {currencies.map(c => <option key={c.code} value={c.code}>{c.flag} {c.code}</option>)}
-                </select>
-             </div>
-           </div>
+          {/* 大字金額輸入 */}
+          <input
+            type="number"
+            inputMode="decimal"
+            value={baseAmount}
+            onChange={e => setBaseAmount(e.target.value)}
+            className="w-full text-[2.8rem] font-black tabular-nums text-slate-900 bg-transparent outline-none leading-tight"
+            style={{ letterSpacing: '-0.02em' }}
+          />
         </div>
 
-        <div className="pt-4 space-y-4">
-           <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-300 italic text-center">通用參考匯率 (對 HKD)</h4>
-           <div className="overflow-hidden rounded-3xl border border-slate-100">
-              <table className="w-full text-sm text-left">
-                <tbody className="divide-y divide-slate-50">
-                  {currencies.filter(c => c.code !== 'HKD').map(c => (
-                    <tr key={c.code} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-4 font-bold text-slate-600">
-                        {c.mult || 1} {c.code} ({c.name})
-                      </td>
-                      <td className="p-4 text-right font-black text-indigo-500">
-                        {loading ? '...' : ((c.mult || 1) / (rates[c.code] || 1)).toFixed(3)} HKD
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-           </div>
+        {/* 貨幣選擇下拉（Picker）*/}
+        {showPicker && (
+          <div className="border-t border-slate-100 px-3 py-2 max-h-52 overflow-y-auto">
+            {CURRENCIES.map(c => (
+              <button
+                key={c.code}
+                onClick={() => { handleSelectBase(c.code); setShowPicker(false); }}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-[12px] transition-all text-left",
+                  baseCurrency === c.code ? "bg-[#007AFF]/10 text-[#007AFF]" : "hover:bg-slate-50 text-slate-700"
+                )}
+              >
+                <span className="text-lg">{c.flag}</span>
+                <span className="font-semibold text-[13px]">{c.code}</span>
+                <span className="text-[12px] text-slate-400">{c.name}</span>
+                {baseCurrency === c.code && <span className="ml-auto text-[11px] font-bold text-[#007AFF]">✓</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── 多貨幣換算列表（XE 風格）── */}
+      <div className="bg-white rounded-[24px] shadow-sm border border-black/[0.05] overflow-hidden">
+        <div className="divide-y divide-slate-50">
+          {CURRENCIES.filter(c => c.code !== baseCurrency).map(c => {
+            const result = convert(c.code);
+            // 顯示每 1 單位基礎貨幣 = X 目標貨幣（小字參考）
+            const unitRate = rates[baseCurrency] && rates[c.code]
+              ? rates[c.code] / rates[baseCurrency]
+              : 0;
+
+            return (
+              <button
+                key={c.code}
+                onClick={() => handleSelectBase(c.code)}
+                className="w-full flex items-center gap-4 px-5 py-4 hover:bg-slate-50 active:bg-slate-100 transition-colors text-left"
+              >
+                {/* 國旗 */}
+                <span className="text-2xl flex-shrink-0">{c.flag}</span>
+
+                {/* 貨幣名稱 */}
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-[15px] text-slate-800">{c.code}</p>
+                  <p className="text-[11px] text-slate-400">
+                    1 {baseCurrency} = {unitRate > 0 ? fmtResult(unitRate) : '—'} {c.code}
+                  </p>
+                </div>
+
+                {/* 換算結果（大字）*/}
+                <div className="text-right flex-shrink-0">
+                  <p className="font-black text-[18px] tabular-nums text-slate-900"
+                    style={{ letterSpacing: '-0.01em' }}>
+                    {loading ? '...' : fmtResult(result)}
+                  </p>
+                  <p className="text-[10px] font-semibold text-slate-400">{c.symbol}</p>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
-      
-      <p className="text-center text-[10px] font-bold text-slate-300 uppercase tracking-widest flex items-center justify-center gap-2">
-        <RefreshCw className="w-3 h-3" /> Data provider: Open ER API
-      </p>
+
+      {/* ── 底部：更新時間 + 重新整理 ── */}
+      <div className="flex items-center justify-between px-2 pb-24">
+        <p className="text-[11px] text-slate-400">
+          {lastUpdated ? `匯率更新: ${lastUpdated.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}` : '拉取中...'}
+        </p>
+        <button
+          onClick={fetchRates}
+          className={cn("flex items-center gap-1.5 text-[11px] font-semibold text-[#007AFF] active:opacity-60 transition-all",
+            loading && "opacity-50")}
+          disabled={loading}
+        >
+          <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+          重新整理
+        </button>
+      </div>
     </div>
   );
 };

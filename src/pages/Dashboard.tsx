@@ -1,11 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, deleteDoc, doc, orderBy, updateDoc } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import {
+  collection, query, where, onSnapshot, addDoc,
+  serverTimestamp, deleteDoc, doc, updateDoc
+} from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType, cn } from '../lib/utils';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { Plus, Trash2, Calendar, Tag, CreditCard, ArrowUpCircle, ArrowDownCircle, Globe, Pencil, X } from 'lucide-react';
-import { format, isSameDay } from 'date-fns';
+import {
+  Trash2, ArrowUpCircle, ArrowDownCircle, Globe,
+  Pencil, X, ChevronLeft, ChevronRight
+} from 'lucide-react';
+import {
+  format, isSameDay, startOfMonth, endOfMonth,
+  eachDayOfInterval, startOfWeek, endOfWeek,
+  addMonths, subMonths
+} from 'date-fns';
 import { zhHK } from 'date-fns/locale';
 
 interface Transaction {
@@ -20,9 +30,23 @@ interface Transaction {
   foreignCurrency?: string;
 }
 
-const COLORS = ['#0ea5e9', '#f43f5e', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+const COLORS = ['#007AFF', '#FF3B30', '#34C759', '#FF9500', '#AF52DE', '#FF2D55'];
 
-import { startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek, addMonths, subMonths } from 'date-fns';
+// 大數字縮寫（避免 overflow）
+const fmtAmt = (n: number) => {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000)    return `$${(n / 1_000).toFixed(0)}k`;
+  if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}k`;
+  return `$${n.toLocaleString()}`;
+};
+
+// YYYY-MM-DD 字串轉本地 Date（避免 UTC 偏移問題）
+const parseLocalDate = (str: string) => {
+  const [y, m, d] = str.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+const DEFAULT_CATEGORIES = ['餐飲', '交通', '購物', '娛樂', '醫療', '日常', '其他'];
 
 export const Dashboard: React.FC = () => {
   const { user } = useAuth();
@@ -34,355 +58,313 @@ export const Dashboard: React.FC = () => {
   const [recurringItems, setRecurringItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
-  
-  // Budget and Stats state
-  const [monthlyBudget, setMonthlyBudget] = useState<number>(() => {
-    return parseFloat(localStorage.getItem('monmon_budget') || '0');
-  });
+
+  // 預算 state
+  const [monthlyBudget, setMonthlyBudget] = useState<number>(() =>
+    parseFloat(localStorage.getItem('monmon_budget') || '0')
+  );
   const [isEditingBudget, setIsEditingBudget] = useState(false);
   const [tempBudget, setTempBudget] = useState('');
 
-  // Calendar state
+  // 日曆 state
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
 
-  // Currency conversion state
+  // 外幣換算
   const [showCurrency, setShowCurrency] = useState(false);
   const [foreignAmount, setForeignAmount] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState('JPY');
   const [rates, setRates] = useState<Record<string, number>>({});
+  const currs = ['JPY', 'TWD', 'USD', 'EUR', 'CNY', 'KRW'];
 
-  const currs = ['JPY', 'TWD', 'USD', 'EUR', 'CNY'];
-
-  const DEFAULT_CATEGORIES = ['餐飲', '交通', '購物', '娛樂', '醫療', '日常', '其他'];
+  // 類別
   const [categories, setCategories] = useState<string[]>(() => {
     const saved = localStorage.getItem('monmon_categories');
     return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
   });
   const [isEditingCategories, setIsEditingCategories] = useState(false);
-  const [newCategory, setNewCategory] = useState('');
 
   useEffect(() => {
     fetch('https://open.er-api.com/v6/latest/HKD')
-      .then(res => res.json())
-      .then(data => setRates(data.rates));
+      .then(r => r.json())
+      .then(d => setRates(d.rates))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!user) return;
-
-    const q = query(
-      collection(db, 'expenses'),
-      where('userId', '==', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Transaction[];
-      // Sort on client side to avoid missing index error
+    const q = query(collection(db, 'expenses'), where('userId', '==', user.uid));
+    const unsub = onSnapshot(q, snap => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Transaction[];
       data.sort((a, b) => {
-        const dateA = (a as any).createdAt && typeof (a as any).createdAt.toMillis === 'function' ? (a as any).createdAt.toMillis() : 0;
-        const dateB = (b as any).createdAt && typeof (b as any).createdAt.toMillis === 'function' ? (b as any).createdAt.toMillis() : 0;
-        return dateB - dateA;
+        const ta = (a as any).createdAt?.toMillis?.() ?? 0;
+        const tb = (b as any).createdAt?.toMillis?.() ?? 0;
+        return tb - ta;
       });
       setTransactions(data);
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'expenses', user);
-    });
+    }, err => handleFirestoreError(err, OperationType.LIST, 'expenses', user));
 
-    const qRec = query(
-      collection(db, 'recurring'),
-      where('userId', '==', user.uid)
-    );
+    const qRec = query(collection(db, 'recurring'), where('userId', '==', user.uid));
+    const unsubRec = onSnapshot(qRec, snap =>
+      setRecurringItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    , err => handleFirestoreError(err, OperationType.LIST, 'recurring', user));
 
-    const unsubscribeRec = onSnapshot(qRec, (snapshot) => {
-      setRecurringItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'recurring', user);
-    });
-
-    return () => {
-      unsubscribe();
-      unsubscribeRec();
-    };
+    return () => { unsub(); unsubRec(); };
   }, [user]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !amount) return;
-
+    const data = {
+      amount: parseFloat(amount),
+      category: category || '其他',
+      type,
+      remark,
+      dateStr: format(selectedDate, 'yyyy-MM-dd'),
+      userId: user.uid,
+      foreignAmount: foreignAmount ? parseFloat(foreignAmount) : null,
+      foreignCurrency: foreignAmount ? selectedCurrency : null,
+    };
     try {
-      const data = {
-        amount: parseFloat(amount),
-        category: category || '其他',
-        type,
-        remark,
-        dateStr: format(selectedDate, 'yyyy-MM-dd'),
-        userId: user.uid,
-        foreignAmount: foreignAmount ? parseFloat(foreignAmount) : null,
-        foreignCurrency: foreignAmount ? selectedCurrency : null,
-      };
-
       if (editingId) {
-        await updateDoc(doc(db, 'expenses', editingId), {
-          ...data,
-          updatedAt: serverTimestamp(),
-        });
+        await updateDoc(doc(db, 'expenses', editingId), { ...data, updatedAt: serverTimestamp() });
         setEditingId(null);
       } else {
-        await addDoc(collection(db, 'expenses'), {
-          ...data,
-          createdAt: serverTimestamp(),
-        });
+        await addDoc(collection(db, 'expenses'), { ...data, createdAt: serverTimestamp() });
       }
-      
-      const savedCategory = category || '其他';
-      if (!categories.includes(savedCategory)) {
-        const newCats = [...categories, savedCategory];
-        setCategories(newCats);
-        localStorage.setItem('monmon_categories', JSON.stringify(newCats));
+      const cat = category || '其他';
+      if (!categories.includes(cat)) {
+        const nc = [...categories, cat];
+        setCategories(nc);
+        localStorage.setItem('monmon_categories', JSON.stringify(nc));
       }
-      
-      setAmount('');
-      setRemark('');
-      setCategory('');
-      setForeignAmount('');
-      setShowCurrency(false);
+      setAmount(''); setRemark(''); setCategory('');
+      setForeignAmount(''); setShowCurrency(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'expenses', user);
     }
   };
 
   const handleEdit = (t: Transaction) => {
+    window.scrollTo({ top: 500, behavior: 'smooth' });
     setEditingId(t.id);
     setAmount(t.amount.toString());
     setCategory(t.category);
     setType(t.type);
     setRemark(t.remark);
-    setSelectedDate(new Date(t.dateStr));
+    // 用本地日期解析，避免 UTC offset 偏移一天
+    setSelectedDate(parseLocalDate(t.dateStr));
     if (t.foreignAmount) {
       setForeignAmount(t.foreignAmount.toString());
       setSelectedCurrency(t.foreignCurrency || 'JPY');
       setShowCurrency(true);
     } else {
-      setForeignAmount('');
-      setShowCurrency(false);
+      setForeignAmount(''); setShowCurrency(false);
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'expenses', id));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, 'expenses', user);
-    }
-  };
-
-  const chartData = Object.entries(
-    transactions
-      .filter(t => t.type === 'expense')
-      .reduce((acc, t) => {
-        acc[t.category] = (acc[t.category] || 0) + t.amount;
-        return acc;
-      }, {} as Record<string, number>)
-  ).map(([name, value]) => ({ name, value }));
-
-  // Stats Calculation
-  const stats = transactions.reduce((acc, t) => {
-    if (t.type === 'expense') {
-      const tDate = new Date(t.dateStr);
-      // Daily (Selected)
-      if (isSameDay(tDate, selectedDate)) acc.daily += t.amount;
-      // Monthly (Current Calendar View)
-      if (tDate.getMonth() === currentMonth.getMonth() && tDate.getFullYear() === currentMonth.getFullYear()) acc.monthly += t.amount;
-      // Yearly (Current Calendar Year)
-      if (tDate.getFullYear() === currentMonth.getFullYear()) acc.yearly += t.amount;
-    }
-    return acc;
-  }, { daily: 0, monthly: 0, yearly: 0 });
-
-  const totalBalance = transactions.reduce((acc, t) => {
-    return acc + (t.type === 'income' ? t.amount : -t.amount);
-  }, 0) + recurringItems.reduce((acc, r) => {
-    const val = r.freq === 'monthly' ? r.amount : r.amount / 12;
-    return acc + (r.type === 'income' ? val : -val);
-  }, 0);
-
-  const handleSetBudget = () => {
-    const val = prompt('輸入每月消費預算 (HKD):', monthlyBudget.toString());
-    if (val !== null) {
-      const b = parseFloat(val);
-      setMonthlyBudget(b);
-      localStorage.setItem('monmon_budget', b.toString());
-    }
+    try { await deleteDoc(doc(db, 'expenses', id)); }
+    catch (err) { handleFirestoreError(err, OperationType.DELETE, 'expenses', user); }
   };
 
   const applyCurrency = () => {
     if (!foreignAmount || !rates[selectedCurrency]) return;
-    const inHKD = parseFloat(foreignAmount) / rates[selectedCurrency];
-    setAmount(inHKD.toFixed(2));
+    setAmount((parseFloat(foreignAmount) / rates[selectedCurrency]).toFixed(2));
   };
 
-  // Calendar logic
-  const monthStart = startOfMonth(currentMonth);
-  const monthEnd = endOfMonth(monthStart);
-  const startDate = startOfWeek(monthStart);
-  const endDate = endOfWeek(monthEnd);
-  const calendarDays = eachDayOfInterval({ start: startDate, end: endDate });
+  // 日曆資料
+  const monthStart  = startOfMonth(currentMonth);
+  const calendarDays = eachDayOfInterval({
+    start: startOfWeek(monthStart),
+    end:   endOfWeek(endOfMonth(monthStart)),
+  });
 
   const getDayTotal = (day: Date) => {
     const ds = format(day, 'yyyy-MM-dd');
     return transactions
       .filter(t => t.dateStr === ds)
-      .reduce((acc, t) => acc + (t.type === 'income' ? t.amount : -t.amount), 0);
+      .reduce((a, t) => a + (t.type === 'income' ? t.amount : -t.amount), 0);
+  };
+
+  // 統計計算
+  const stats = transactions.reduce((acc, t) => {
+    if (t.type === 'expense') {
+      const d = parseLocalDate(t.dateStr);
+      if (isSameDay(d, selectedDate))
+        acc.daily += t.amount;
+      if (d.getMonth() === currentMonth.getMonth() && d.getFullYear() === currentMonth.getFullYear())
+        acc.monthly += t.amount;
+      if (d.getFullYear() === currentMonth.getFullYear())
+        acc.yearly += t.amount;
+    }
+    return acc;
+  }, { daily: 0, monthly: 0, yearly: 0 });
+
+  const totalBalance =
+    transactions.reduce((a, t) => a + (t.type === 'income' ? t.amount : -t.amount), 0) +
+    recurringItems.reduce((a, r) => {
+      const v = r.freq === 'monthly' ? r.amount : r.amount / 12;
+      return a + (r.type === 'income' ? v : -v);
+    }, 0);
+
+  const chartData = Object.entries(
+    transactions.filter(t => t.type === 'expense')
+      .reduce((a, t) => { a[t.category] = (a[t.category] || 0) + t.amount; return a; }, {} as Record<string, number>)
+  ).map(([name, value]) => ({ name, value }));
+
+  // 保存預算
+  const saveBudget = () => {
+    const b = parseFloat(tempBudget) || 0;
+    setMonthlyBudget(b);
+    localStorage.setItem('monmon_budget', b.toString());
+    setIsEditingBudget(false);
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Balance Card */}
-      <div className="bg-slate-900 rounded-[40px] p-10 text-white shadow-2xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-sky-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-sky-500/20 transition-all duration-700 pointer-events-none z-0" />
-        <div className="relative z-20">
-          {/* 手機版分兩行排列，避免「設定預算」按鈕令畫面變型 */}
-          <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:justify-between sm:items-start">
-            <div className="space-y-1 min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">淨資產變動 (HKD)</p>
-              <h2 className="text-5xl font-black tracking-tighter tabular-nums break-all">
-                ${totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </h2>
-            </div>
+    <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+      {/* ══ 淨資產卡片（Apple Wallet 深色卡片風格）══ */}
+      <div className="relative overflow-hidden rounded-[28px] p-6 text-white shadow-xl"
+        style={{ background: 'linear-gradient(135deg, #1C1C2E 0%, #16213E 60%, #0F3460 100%)' }}>
+        {/* 裝飾光暈 */}
+        <div className="pointer-events-none absolute -top-16 -right-16 w-48 h-48 rounded-full opacity-20"
+          style={{ background: 'radial-gradient(circle, #007AFF, transparent)' }} />
+        <div className="pointer-events-none absolute -bottom-12 -left-12 w-40 h-40 rounded-full opacity-10"
+          style={{ background: 'radial-gradient(circle, #AF52DE, transparent)' }} />
+
+        <div className="relative z-10">
+          {/* 頂部：標題 + 設定預算按鈕 */}
+          <div className="flex items-start justify-between mb-4">
+            <p className="text-[11px] font-semibold tracking-[0.15em] text-white/50 uppercase">淨資產變動 (HKD)</p>
             {isEditingBudget ? (
-              /* 編輯預算時的輸入框 */
-              <div className="flex items-center gap-2 bg-white/10 p-1 rounded-2xl border border-white/10 animate-in zoom-in-95 duration-200 self-start">
+              <div className="flex items-center gap-1.5 bg-white/10 rounded-2xl p-1 border border-white/10">
                 <input
                   type="number"
                   value={tempBudget}
-                  onChange={(e) => setTempBudget(e.target.value)}
-                  className="w-28 bg-transparent text-white font-black text-center text-sm outline-none px-2"
+                  onChange={e => setTempBudget(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveBudget()}
                   autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const b = parseFloat(tempBudget) || 0;
-                      setMonthlyBudget(b);
-                      localStorage.setItem('monmon_budget', b.toString());
-                      setIsEditingBudget(false);
-                    }
-                  }}
+                  className="w-24 bg-transparent text-white text-sm font-bold text-center outline-none px-2"
+                  placeholder="預算金額"
                 />
-                <button 
-                  onClick={() => {
-                    const b = parseFloat(tempBudget) || 0;
-                    setMonthlyBudget(b);
-                    localStorage.setItem('monmon_budget', b.toString());
-                    setIsEditingBudget(false);
-                  }}
-                  className="p-2 bg-sky-500 rounded-xl text-[10px] font-black"
-                >
-                  ✓
-                </button>
-                <button
-                  onClick={() => setIsEditingBudget(false)}
-                  className="p-2 bg-white/10 rounded-xl text-[10px] font-black text-slate-400"
-                >
-                  ✕
-                </button>
+                <button onClick={saveBudget} className="px-2.5 py-1 bg-sky-500 rounded-xl text-[10px] font-black">✓</button>
+                <button onClick={() => setIsEditingBudget(false)} className="px-2 py-1 bg-white/10 rounded-xl text-[10px] text-white/60">✕</button>
               </div>
             ) : (
-              <button 
-                onClick={() => {
-                  setTempBudget(monthlyBudget.toString());
-                  setIsEditingBudget(true);
-                }}
-                className="self-start px-4 py-2 bg-white/10 hover:bg-white/20 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer active:scale-95 shadow-lg border border-white/5 relative z-30 whitespace-nowrap"
+              <button
+                onClick={() => { setTempBudget(monthlyBudget.toString()); setIsEditingBudget(true); }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 active:scale-95 rounded-2xl text-[10px] font-semibold tracking-widest text-white/70 border border-white/10 transition-all whitespace-nowrap"
               >
-                設定預算
+                {monthlyBudget > 0 ? `預算 $${monthlyBudget.toLocaleString()}` : '設定預算'}
               </button>
             )}
           </div>
 
-          {/* Budget Bar */}
-          <div className="space-y-2 mb-8">
-            <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
-              <span>預算進度 (本月)</span>
-              <span>{monthlyBudget > 0 ? `${Math.round((stats.monthly / monthlyBudget) * 100)}%` : '未設定'}</span>
+          {/* 大金額顯示：用 clamp 控制字型，完全不換行 */}
+          <div className="mb-5 overflow-hidden">
+            <p
+              className="font-black tabular-nums text-white leading-none"
+              style={{ fontSize: 'clamp(1.8rem, 8vw, 2.8rem)', letterSpacing: '-0.02em' }}
+            >
+              {totalBalance >= 0 ? '+' : ''}
+              ${Math.abs(totalBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </p>
+            {totalBalance < 0 && (
+              <span className="text-[11px] font-semibold text-rose-400 mt-1 block">淨負債</span>
+            )}
+          </div>
+
+          {/* 預算進度條 */}
+          <div className="mb-5 space-y-1.5">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-semibold text-white/40 uppercase tracking-widest">本月預算</span>
+              <span className={cn(
+                "text-[10px] font-bold",
+                monthlyBudget > 0 && stats.monthly > monthlyBudget ? "text-rose-400" : "text-white/60"
+              )}>
+                {monthlyBudget > 0 ? `${Math.round((stats.monthly / monthlyBudget) * 100)}%` : '未設定'}
+              </span>
             </div>
-            <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
-              <div 
-                className={cn(
-                  "h-full transition-all duration-1000",
-                  stats.monthly > monthlyBudget ? "bg-rose-500" : "bg-sky-400"
-                )}
+            <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all duration-1000",
+                  stats.monthly > (monthlyBudget || Infinity) ? "bg-rose-500" : "bg-sky-400")}
                 style={{ width: `${Math.min((stats.monthly / (monthlyBudget || 1)) * 100, 100)}%` }}
               />
             </div>
             {monthlyBudget > 0 && (
-              <p className="text-[9px] font-bold text-slate-500 text-right italic">
-                剩餘: ${(monthlyBudget - stats.monthly).toLocaleString()}
+              <p className="text-[9px] text-white/30 text-right">
+                剩餘 {fmtAmt(Math.max(monthlyBudget - stats.monthly, 0))}
               </p>
             )}
           </div>
 
-          {/* Mini Stats Card */}
+          {/* 今日 / 本月 / 今年 三格統計 */}
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-white/5 p-4 rounded-3xl text-center">
-              <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">今日支出</p>
-              <p className="text-sm font-black">${stats.daily.toLocaleString()}</p>
-            </div>
-            <div className="bg-white/5 p-4 rounded-3xl text-center">
-              <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">本月支出</p>
-              <p className="text-sm font-black">${stats.monthly.toLocaleString()}</p>
-            </div>
-            <div className="bg-white/5 p-4 rounded-3xl text-center">
-              <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">今年支出</p>
-              <p className="text-sm font-black">${stats.yearly.toLocaleString()}</p>
-            </div>
+            {[
+              { label: '今日支出', val: stats.daily },
+              { label: '本月支出', val: stats.monthly },
+              { label: '今年支出', val: stats.yearly },
+            ].map(({ label, val }) => (
+              <div key={label} className="bg-white/8 rounded-[16px] p-3 text-center" style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}>
+                <p className="text-[8px] font-semibold text-white/40 uppercase tracking-widest mb-1.5 leading-tight">{label}</p>
+                {/* fmtAmt 防止大數字 overflow */}
+                <p className="font-black text-white tabular-nums text-sm leading-none">{fmtAmt(val)}</p>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-
-      {/* Calendar Card */}
-      <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm space-y-6">
-        <div className="flex items-center justify-between px-2">
-          <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-2 text-slate-400 hover:text-slate-900 transition-colors">❮</button>
-          <h3 className="font-black text-slate-900 uppercase tracking-widest text-[11px] font-mono">
-            {format(currentMonth, 'MMMM yyyy', { locale: zhHK })}
+      {/* ══ 日曆卡片 ══ */}
+      <div className="bg-white rounded-[24px] p-5 shadow-sm border border-black/[0.05]">
+        {/* 月份導航 */}
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 active:scale-90 transition-all">
+            <ChevronLeft className="w-4 h-4 text-slate-500" />
+          </button>
+          <h3 className="text-sm font-bold text-slate-900">
+            {format(currentMonth, 'yyyy年 M月', { locale: zhHK })}
           </h3>
-          <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-2 text-slate-400 hover:text-slate-900 transition-colors">❯</button>
+          <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 active:scale-90 transition-all">
+            <ChevronRight className="w-4 h-4 text-slate-500" />
+          </button>
         </div>
-        
-        <div className="grid grid-cols-7 gap-1">
+
+        <div className="grid grid-cols-7 gap-0.5">
           {['日', '一', '二', '三', '四', '五', '六'].map(d => (
-            <div key={d} className="text-center text-[10px] font-black text-slate-300 py-2">{d}</div>
+            <div key={d} className="text-center text-[10px] font-semibold text-slate-400 py-1.5">{d}</div>
           ))}
           {calendarDays.map((day, i) => {
-            const isSelected = isSameDay(day, selectedDate);
-            const isToday = isSameDay(day, new Date());
-            const total = getDayTotal(day);
-            const isCurrentMonth = day.getMonth() === currentMonth.getMonth();
-            
+            const isSelected  = isSameDay(day, selectedDate);
+            const isToday     = isSameDay(day, new Date());
+            const total       = getDayTotal(day);
+            const isThisMonth = day.getMonth() === currentMonth.getMonth();
             return (
               <button
                 key={i}
                 onClick={() => setSelectedDate(day)}
                 className={cn(
-                  "relative aspect-square flex flex-col items-center justify-between py-1.5 rounded-2xl transition-all border border-transparent",
-                  isSelected ? "bg-sky-500 text-white shadow-lg shadow-sky-100 border-sky-400" : "hover:bg-slate-50",
-                  !isCurrentMonth && !isSelected && "opacity-20",
-                  isToday && !isSelected && "border-sky-200"
+                  "relative aspect-square flex flex-col items-center justify-between py-1 rounded-xl transition-all",
+                  isSelected  ? "bg-[#007AFF] text-white shadow-md shadow-blue-200"
+                              : isToday ? "bg-blue-50 text-[#007AFF]"
+                              : "hover:bg-slate-50 text-slate-800",
+                  !isThisMonth && !isSelected && "opacity-25"
                 )}
               >
-                <span className="text-[11px] font-black leading-none">{format(day, 'd')}</span>
+                <span className="text-[11px] font-semibold leading-none">{format(day, 'd')}</span>
                 {total !== 0 && (
                   <span className={cn(
-                    "text-[8px] font-black leading-[1] truncate w-[90%] text-center",
-                    isSelected ? "text-white" : (total > 0 ? "text-emerald-500" : "text-rose-400")
+                    "text-[7px] font-bold leading-tight w-full text-center px-0.5",
+                    isSelected ? "text-white/80"
+                               : total > 0 ? "text-emerald-500" : "text-rose-400"
                   )}>
-                    {total > 0 ? '+' : ''}{Math.round(total)}
+                    {total >= 10000 ? `${(total / 1000).toFixed(0)}k`
+                      : total >= 1000 ? `${(total / 1000).toFixed(1)}k`
+                      : Math.round(Math.abs(total))}
                   </span>
                 )}
               </button>
@@ -391,224 +373,224 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Add Transaction Form */}
-      <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm space-y-6">
-        <div className="flex items-center justify-between px-2">
-          <div className="space-y-1">
-            <h3 className="text-xl font-black tracking-tighter text-slate-900">
-              {editingId ? '修改紀錄' : '新增紀錄'}
-            </h3>
-            <p className="text-[10px] font-black text-sky-500 uppercase tracking-widest">
-              {format(selectedDate, 'MMM do', { locale: zhHK })}
-            </p>
-          </div>
-        </div>
-        
-        <div className="flex bg-slate-50 p-1.5 rounded-2xl gap-2">
-          <button
-            onClick={() => setType('expense')}
-            className={cn(
-              "flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              type === 'expense' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'
-            )}
-          >
-            支出
-          </button>
-          <button
-            onClick={() => setType('income')}
-            className={cn(
-              "flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-              type === 'income' ? 'bg-white text-emerald-500 shadow-sm' : 'text-slate-400'
-            )}
-          >
-            收入
-          </button>
+      {/* ══ 新增 / 修改紀錄表單 ══ */}
+      <div className="bg-white rounded-[24px] p-5 shadow-sm border border-black/[0.05] space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[17px] font-bold text-slate-900">
+            {editingId ? '修改紀錄' : '新增紀錄'}
+          </h3>
+          {editingId && (
+            <button onClick={() => setEditingId(null)} className="text-[12px] font-semibold text-slate-400 hover:text-slate-600">取消</button>
+          )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <div className="flex justify-between items-center px-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">金額 (HKD)</label>
-              <button 
-                onClick={() => setShowCurrency(!showCurrency)}
-                className="text-[9px] font-black text-sky-500 uppercase tracking-widest flex items-center gap-1"
-              >
-                <Globe className="w-2.5 h-2.5" /> 匯率
-              </button>
-            </div>
-            <input
-              type="number"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-slate-900 transition-all font-black text-lg text-center"
-            />
-          </div>
-          <div className="space-y-2">
-            <div className="flex justify-between items-center px-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">類別</label>
-              <button 
-                type="button"
-                onClick={() => setIsEditingCategories(!isEditingCategories)}
-                className="text-[9px] font-black text-sky-500 uppercase tracking-widest flex items-center gap-1 hover:text-sky-600"
-              >
-                {isEditingCategories ? '完成編輯' : '編輯常用'}
-              </button>
-            </div>
-            <input
-              type="text"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="輸入或選擇類別"
-              className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-slate-900 transition-all font-bold text-sm text-center"
-            />
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {categories.map(cat => (
-                <div key={cat} className="relative group flex">
-                  <button
-                    type="button"
-                    onClick={() => setCategory(cat)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all border",
-                      category === cat ? "bg-slate-900 text-white border-slate-900 shadow-md" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 shadow-sm"
-                    )}
-                  >
-                    {cat}
-                  </button>
-                  {isEditingCategories && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const newCats = categories.filter(c => c !== cat);
-                        setCategories(newCats);
-                        localStorage.setItem('monmon_categories', JSON.stringify(newCats));
-                        if (category === cat) setCategory('');
-                      }}
-                      className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full flex items-center justify-center animate-in zoom-in shadow-sm cursor-pointer z-10"
-                    >
-                      <X className="w-2.5 h-2.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-              {isEditingCategories && (
-                <button 
-                  type="button"
-                  onClick={() => {
-                    setCategories(DEFAULT_CATEGORIES);
-                    localStorage.setItem('monmon_categories', JSON.stringify(DEFAULT_CATEGORIES));
-                  }}
-                  className="px-3 py-1.5 rounded-xl text-[10px] font-bold bg-slate-50 text-slate-400 border border-transparent hover:text-slate-600 underline"
-                >
-                  重置預設
-                </button>
+        {/* 支出 / 收入 切換 */}
+        <div className="flex bg-[#F2F2F7] p-1 rounded-[14px] gap-1">
+          {(['expense', 'income'] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setType(t)}
+              className={cn(
+                "flex-1 py-2.5 rounded-[11px] text-[13px] font-semibold transition-all",
+                type === t
+                  ? t === 'expense' ? 'bg-white text-rose-500 shadow-sm' : 'bg-white text-emerald-600 shadow-sm'
+                  : 'text-slate-400'
               )}
-            </div>
-          </div>
+            >
+              {t === 'expense' ? '支出' : '收入'}
+            </button>
+          ))}
         </div>
 
-        {showCurrency && (
-          <div className="p-5 bg-sky-50 rounded-3xl border border-sky-100 animate-in zoom-in-95 duration-200 flex gap-3 items-center">
-             <select
-               value={selectedCurrency}
-               onChange={(e) => setSelectedCurrency(e.target.value)}
-               className="bg-white px-3 py-2 rounded-xl text-xs font-black border-none outline-none shadow-sm"
-             >
-               {currs.map(c => <option key={c} value={c}>{c}</option>)}
-             </select>
-             <input
-               type="number"
-               placeholder="外幣金額"
-               value={foreignAmount}
-               onChange={(e) => setForeignAmount(e.target.value)}
-               className="flex-1 px-4 py-2 bg-white rounded-xl border-none outline-none text-xs font-bold text-center"
-             />
-             <button
-               onClick={applyCurrency}
-               className="px-4 py-2 bg-sky-500 text-white rounded-xl text-[10px] font-black uppercase"
-             >
-               換算
-             </button>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">備註</label>
+        {/* 日期選擇器（新增！） */}
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">日期</label>
           <input
-            type="text"
-            placeholder="項目名稱或備註"
-            value={remark}
-            onChange={(e) => setRemark(e.target.value)}
-            className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-slate-900 transition-all font-bold text-sm text-center"
+            type="date"
+            value={format(selectedDate, 'yyyy-MM-dd')}
+            onChange={e => {
+              if (!e.target.value) return;
+              setSelectedDate(parseLocalDate(e.target.value));
+            }}
+            className="w-full px-4 py-3 bg-[#F2F2F7] border border-transparent rounded-[14px] outline-none focus:border-[#007AFF] transition-all font-semibold text-sm text-slate-900"
           />
         </div>
 
-        <div className="flex gap-3">
-          {editingId && (
+        {/* 金額 */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">金額 (HKD)</label>
             <button
-              onClick={() => setEditingId(null)}
-              className="flex-1 py-5 bg-slate-100 text-slate-400 rounded-3xl font-black uppercase tracking-widest text-xs active:scale-95 transition-all"
+              onClick={() => setShowCurrency(!showCurrency)}
+              className={cn(
+                "flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full transition-all",
+                showCurrency ? "bg-sky-500 text-white" : "bg-sky-50 text-sky-600"
+              )}
             >
-              取消
+              <Globe className="w-3 h-3" /> 外幣換算
             </button>
-          )}
-          <button
-            onClick={handleAdd}
-            className="flex-[2] py-5 bg-sky-500 text-white rounded-[32px] font-black uppercase tracking-[0.2em] text-xs hover:bg-sky-600 active:scale-95 transition-all shadow-xl shadow-sky-100"
-          >
-            {editingId ? '保存更改' : '保存明細'}
-          </button>
+          </div>
+          <input
+            type="number"
+            placeholder="0.00"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            className="w-full px-5 py-4 bg-[#F2F2F7] border border-transparent rounded-[14px] outline-none focus:border-[#007AFF] transition-all font-black text-2xl text-center tabular-nums text-slate-900"
+          />
         </div>
+
+        {/* 外幣換算面板 */}
+        {showCurrency && (
+          <div className="p-4 bg-sky-50 rounded-[18px] border border-sky-100 flex gap-2 items-center">
+            <select
+              value={selectedCurrency}
+              onChange={e => setSelectedCurrency(e.target.value)}
+              className="bg-white px-3 py-2 rounded-xl text-sm font-bold border border-sky-100 outline-none"
+            >
+              {currs.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input
+              type="number"
+              placeholder="外幣金額"
+              value={foreignAmount}
+              onChange={e => setForeignAmount(e.target.value)}
+              className="flex-1 px-4 py-2 bg-white rounded-xl border border-sky-100 outline-none text-sm font-semibold text-center"
+            />
+            <button
+              onClick={applyCurrency}
+              className="px-4 py-2 bg-[#007AFF] text-white rounded-xl text-[11px] font-bold active:scale-95 transition-all"
+            >
+              換算
+            </button>
+          </div>
+        )}
+
+        {/* 類別 */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">類別</label>
+            <button
+              onClick={() => setIsEditingCategories(!isEditingCategories)}
+              className="text-[10px] font-semibold text-sky-500"
+            >
+              {isEditingCategories ? '完成' : '編輯'}
+            </button>
+          </div>
+          <input
+            type="text"
+            value={category}
+            onChange={e => setCategory(e.target.value)}
+            placeholder="輸入或選擇類別"
+            className="w-full px-4 py-3 bg-[#F2F2F7] border border-transparent rounded-[14px] outline-none focus:border-[#007AFF] transition-all font-semibold text-sm text-slate-900"
+          />
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {categories.map(cat => (
+              <div key={cat} className="relative">
+                <button
+                  onClick={() => setCategory(cat)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-[10px] text-[12px] font-semibold transition-all",
+                    category === cat ? "bg-[#1C1C1E] text-white" : "bg-[#F2F2F7] text-slate-600 hover:bg-slate-200"
+                  )}
+                >
+                  {cat}
+                </button>
+                {isEditingCategories && (
+                  <button
+                    onClick={() => {
+                      const nc = categories.filter(c => c !== cat);
+                      setCategories(nc);
+                      localStorage.setItem('monmon_categories', JSON.stringify(nc));
+                      if (category === cat) setCategory('');
+                    }}
+                    className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-sm z-10"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {isEditingCategories && (
+              <button
+                onClick={() => { setCategories(DEFAULT_CATEGORIES); localStorage.setItem('monmon_categories', JSON.stringify(DEFAULT_CATEGORIES)); }}
+                className="px-3 py-1.5 rounded-[10px] text-[12px] font-semibold text-slate-400 underline"
+              >
+                重置
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 備註 */}
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">備註</label>
+          <input
+            type="text"
+            placeholder="項目名稱或備註（選填）"
+            value={remark}
+            onChange={e => setRemark(e.target.value)}
+            className="w-full px-4 py-3 bg-[#F2F2F7] border border-transparent rounded-[14px] outline-none focus:border-[#007AFF] transition-all font-semibold text-sm text-slate-900"
+          />
+        </div>
+
+        {/* 提交按鈕 */}
+        <button
+          onClick={handleAdd}
+          className="w-full py-4 bg-[#007AFF] text-white rounded-[16px] font-bold text-[15px] active:scale-[0.98] transition-all shadow-lg shadow-blue-200 mt-1"
+        >
+          {editingId ? '保存更改' : '保存明細'}
+        </button>
       </div>
 
-      {/* Transaction List */}
-      <div className="space-y-4 pb-24">
-        <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2 italic">最近紀錄</h3>
-        {transactions.map((t) => (
+      {/* ══ 最近紀錄 ══ */}
+      <div className="space-y-2 pb-24">
+        <h3 className="text-[13px] font-semibold text-slate-400 px-1 mb-1">最近紀錄</h3>
+        {transactions.map(t => (
           <div
             key={t.id}
-            className="group bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex items-center justify-between hover:shadow-md transition-all duration-300"
+            className="group bg-white rounded-[20px] border border-black/[0.05] shadow-sm px-4 py-3.5 flex items-center justify-between"
           >
-            <div className="flex items-center gap-4">
-              <div className={cn("p-3 rounded-2xl", t.type === 'income' ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500')}>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={cn("w-10 h-10 rounded-[12px] flex items-center justify-center flex-shrink-0",
+                t.type === 'income' ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'
+              )}>
                 {t.type === 'income' ? <ArrowUpCircle className="w-5 h-5" /> : <ArrowDownCircle className="w-5 h-5" />}
               </div>
-              <div className="space-y-0.5">
-                <p className="font-black text-slate-900 text-base">
+              <div className="min-w-0">
+                <p className="font-semibold text-[15px] text-slate-900 truncate">
                   {t.remark || t.category}
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-[11px] text-slate-400 font-medium">{t.category}</span>
+                  <span className="text-slate-200">·</span>
+                  <span className="text-[11px] text-slate-300">{t.dateStr}</span>
                   {t.foreignAmount && (
-                    <span className="ml-2 text-[8px] font-black text-slate-300 border border-slate-100 px-1.5 py-0.5 rounded-lg">
+                    <span className="text-[9px] text-slate-300 bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100">
                       {t.foreignCurrency} {t.foreignAmount.toLocaleString()}
                     </span>
                   )}
-                </p>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t.category}</span>
-                  <span className="text-[10px] font-medium text-slate-200">•</span>
-                  <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">{t.dateStr}</span>
                 </div>
               </div>
             </div>
-            {/* 右側：金額 + 編輯/刪除按鈕（桌面版 hover 顯示，手機版永遠可見） */}
-            <div className="flex items-center gap-2">
-              <p className={cn("font-black text-lg tabular-nums", t.type === 'income' ? 'text-emerald-500' : 'text-slate-900')}>
+
+            {/* 金額 + 操作按鈕（手機版永遠可見） */}
+            <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+              <p className={cn("font-bold text-[15px] tabular-nums",
+                t.type === 'income' ? 'text-emerald-500' : 'text-slate-900'
+              )}>
                 {t.type === 'income' ? '+' : ''}${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </p>
-              <div className="flex flex-col gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-all">
+              {/* 桌面版 hover 顯示，手機版一直可見 */}
+              <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-all">
                 <button
                   onClick={() => handleEdit(t)}
-                  className="p-2 bg-slate-50 text-slate-400 hover:text-sky-500 active:text-sky-500 rounded-lg"
-                  title="編輯"
+                  className="p-1.5 bg-slate-50 hover:bg-sky-50 text-slate-400 hover:text-sky-500 active:text-sky-500 rounded-lg transition-all"
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  onClick={() => {
-                    if (confirm('確定刪除此紀錄？')) handleDelete(t.id);
-                  }}
-                  className="p-2 bg-slate-50 text-slate-400 hover:text-rose-500 active:text-rose-500 rounded-lg"
-                  title="刪除"
+                  onClick={() => { if (confirm('確定刪除此紀錄？')) handleDelete(t.id); }}
+                  className="p-1.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-500 active:text-rose-500 rounded-lg transition-all"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -618,44 +600,33 @@ export const Dashboard: React.FC = () => {
         ))}
       </div>
 
-      {/* Stats and Chart */}
+      {/* ══ 支出分佈圖 ══ */}
       {chartData.length > 0 && (
-        <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm flex flex-col items-center mb-8">
-          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6 w-full text-center italic">支出分佈</h3>
-          <div className="w-full h-48">
+        <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm mb-8">
+          <h3 className="text-[13px] font-semibold text-slate-400 mb-4 text-center">支出分佈</h3>
+          <div className="w-full h-44">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie
-                  data={chartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {chartData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
+                <Pie data={chartData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={4} dataKey="value">
+                  {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Pie>
-                <Tooltip />
+                <Tooltip formatter={(v: number) => [`$${v.toLocaleString()}`, '']} />
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-2 mt-4 w-full px-4">
-            {chartData.map((item, index) => (
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-3 px-2">
+            {chartData.map((item, i) => (
               <div key={item.name} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                  <span className="text-[11px] font-bold text-slate-500">{item.name}</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                  <span className="text-[12px] font-medium text-slate-500 truncate">{item.name}</span>
                 </div>
-                <span className="text-[11px] font-black text-slate-900">${item.value.toLocaleString()}</span>
+                <span className="text-[12px] font-bold text-slate-900 tabular-nums">{fmtAmt(item.value)}</span>
               </div>
             ))}
           </div>
         </div>
       )}
-
     </div>
   );
 };

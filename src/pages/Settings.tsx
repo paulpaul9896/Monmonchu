@@ -65,75 +65,74 @@ export const Settings: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="bg-slate-900 rounded-[40px] p-10 text-white shadow-2xl relative overflow-hidden group">
-         <div className="absolute top-0 right-0 w-64 h-64 bg-sky-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-         <h2 className="text-4xl font-black tracking-tighter mb-2">MonMonChu 系統設定</h2>
-         <p className="text-xs font-bold text-slate-400 opacity-80 uppercase tracking-widest">管理您的帳號與偏好</p>
+    <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+      {/* Hero */}
+      <div className="relative overflow-hidden rounded-[28px] p-6 text-white shadow-xl"
+        style={{ background: 'linear-gradient(135deg, #1C1C2E 0%, #2c2c3e 60%, #3b3b5c 100%)' }}>
+        <div className="pointer-events-none absolute -top-16 -right-16 w-48 h-48 rounded-full opacity-15"
+          style={{ background: 'radial-gradient(circle, #007AFF, transparent)' }} />
+        <div className="relative z-10">
+          <h2 className="text-[24px] font-bold tracking-tight mb-1">系統設定</h2>
+          <p className="text-[12px] font-medium text-white/50">管理您的帳號與偏好</p>
+        </div>
       </div>
 
-      <div className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm space-y-8">
-        {/* Account Info */}
-        <div className="flex items-center justify-between p-6 bg-slate-50 rounded-3xl border border-slate-100">
-           <div className="flex items-center gap-4">
-             <div className="w-12 h-12 bg-sky-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-sky-100">
-               <span className="text-xl">👤</span>
-             </div>
-             <div>
-               <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-0.5">當前帳號</p>
-               <p className="text-sm font-bold text-slate-900">{user?.email}</p>
-             </div>
-           </div>
-           <button onClick={() => signOut(auth)} className="p-3 bg-white text-rose-500 rounded-xl shadow-sm hover:bg-rose-50 transition-colors">
-              <LogOut className="w-5 h-5" />
-           </button>
+      {/* 帳號資訊 */}
+      <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 bg-[#007AFF] rounded-[12px] flex items-center justify-center text-white">
+              <span className="text-lg">👤</span>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">當前帳號</p>
+              <p className="text-[14px] font-semibold text-slate-900">{user?.email}</p>
+            </div>
+          </div>
+          <button onClick={() => signOut(auth)} className="p-2.5 bg-rose-50 text-rose-500 rounded-[10px] active:scale-90 transition-all">
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
+      </div>
 
-        {/* Change Password */}
-        <section className="space-y-4">
-           <div className="flex items-center gap-2 mb-2">
-             <Shield className="w-4 h-4 text-sky-500" />
-             <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 italic">安全性設定</h3>
-           </div>
-           <form onSubmit={handleUpdatePassword} className="space-y-3">
-              <input
-                type="password"
-                placeholder="新密碼 (至少6位數)"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-sky-500 transition-all font-bold text-sm text-center"
-              />
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:bg-slate-800 disabled:opacity-50 transition-all"
-              >
-                {loading ? '處理中...' : '更新密碼'}
-              </button>
-              {message && <p className="text-emerald-500 text-[10px] font-black text-center bg-emerald-50 py-2 rounded-xl">{message}</p>}
-              {error && <p className="text-rose-500 text-[10px] font-black text-center bg-rose-50 py-2 rounded-xl">{error}</p>}
-           </form>
-        </section>
+      {/* 安全設定 */}
+      <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm space-y-4">
+        <div className="flex items-center gap-2">
+          <Shield className="w-4 h-4 text-[#007AFF]" />
+          <h3 className="text-[13px] font-semibold text-slate-700">安全性設定</h3>
+        </div>
+        <form onSubmit={handleUpdatePassword} className="space-y-3">
+          <input type="password" placeholder="新密碼 (至少 6 位數)" value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            className="w-full px-4 py-3 bg-[#F2F2F7] rounded-[14px] outline-none focus:ring-2 focus:ring-sky-400 font-semibold text-sm transition-all" />
+          <button type="submit" disabled={loading}
+            className="w-full py-4 bg-[#1C1C1E] text-white rounded-[14px] font-bold text-[14px] disabled:opacity-50 active:scale-[0.98] transition-all">
+            {loading ? '處理中...' : '更新密碼'}
+          </button>
+          {message && <p className="text-emerald-600 text-[12px] font-semibold text-center bg-emerald-50 py-2 rounded-[10px]">{message}</p>}
+          {error   && <p className="text-rose-500   text-[12px] font-semibold text-center bg-rose-50   py-2 rounded-[10px]">{error}</p>}
+        </form>
+      </div>
 
-        {/* System Info */}
-        <section className="space-y-4 pt-4 border-t border-slate-100">
-           <div className="flex items-center gap-2 mb-2">
-             <Info className="w-4 h-4 text-slate-300" />
-             <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 italic">系統資訊</h3>
-           </div>
-           <div className="grid grid-cols-2 gap-4">
-              <div className="p-5 bg-slate-50 rounded-2xl flex flex-col items-center justify-center text-center">
-                 <Clock className="w-5 h-5 text-slate-300 mb-2" />
-                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">最後上傳時間</p>
-                 <p className="text-[10px] font-bold text-slate-900">{lastSync}</p>
-              </div>
-              <div className="p-5 bg-slate-50 rounded-2xl flex flex-col items-center justify-center text-center">
-                 <SettingsIcon className="w-5 h-5 text-slate-300 mb-2" />
-                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">應用程式版本</p>
-                 <p className="text-[10px] font-bold text-slate-900">v{appVersion}</p>
-              </div>
-           </div>
-        </section>
+      {/* 系統資訊 */}
+      <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm space-y-4 pb-28">
+        <div className="flex items-center gap-2">
+          <Info className="w-4 h-4 text-slate-400" />
+          <h3 className="text-[13px] font-semibold text-slate-700">系統資訊</h3>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="p-4 bg-[#F2F2F7] rounded-[16px] text-center">
+            <Clock className="w-4 h-4 text-slate-400 mx-auto mb-2" />
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">最後上傳</p>
+            <p className="text-[11px] font-bold text-slate-800">{lastSync}</p>
+          </div>
+          <div className="p-4 bg-[#F2F2F7] rounded-[16px] text-center">
+            <SettingsIcon className="w-4 h-4 text-slate-400 mx-auto mb-2" />
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">版本</p>
+            <p className="text-[11px] font-bold text-slate-800">v{appVersion}</p>
+          </div>
+        </div>
       </div>
     </div>
   );
