@@ -216,11 +216,11 @@ export const Recurring: React.FC = () => {
         </div>
 
         {/* 生效日期（全寬，手機 date picker 更易用）*/}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 min-w-0 overflow-hidden">
           <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">生效日期</label>
           <input type="date" value={date}
             onChange={e => { if (e.target.value) setDate(e.target.value); }}
-            className="w-full px-4 py-3 bg-[#F2F2F7] rounded-[14px] outline-none focus:ring-2 focus:ring-amber-400 font-semibold text-sm transition-all" />
+            className="w-full min-w-0 max-w-full px-4 py-3 bg-[#F2F2F7] rounded-[14px] outline-none focus:ring-2 focus:ring-amber-400 font-semibold text-sm transition-all" />
         </div>
 
         <button onClick={handleAdd}

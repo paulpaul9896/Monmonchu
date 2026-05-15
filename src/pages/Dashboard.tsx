@@ -403,7 +403,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* 日期選擇器（新增！） */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 min-w-0 overflow-hidden">
           <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">日期</label>
           <input
             type="date"
@@ -412,7 +412,7 @@ export const Dashboard: React.FC = () => {
               if (!e.target.value) return;
               setSelectedDate(parseLocalDate(e.target.value));
             }}
-            className="w-full px-4 py-3 bg-[#F2F2F7] border border-transparent rounded-[14px] outline-none focus:border-[#007AFF] transition-all font-semibold text-sm text-slate-900"
+            className="w-full min-w-0 max-w-full px-4 py-3 bg-[#F2F2F7] border border-transparent rounded-[14px] outline-none focus:border-[#007AFF] transition-all font-semibold text-sm text-slate-900"
           />
         </div>
 
