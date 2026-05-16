@@ -1,17 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../lib/firebase';
-import { updatePassword, signOut } from 'firebase/auth';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { Settings as SettingsIcon, Shield, Clock, Info, LogOut } from 'lucide-react';
+import { signOut } from 'firebase/auth';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { Settings as SettingsIcon, Clock, Info, LogOut, Camera } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+
+const AVATAR_KEY = 'monmon_avatar';
 
 export const Settings: React.FC = () => {
   const { user } = useAuth();
-  const [newPassword, setNewPassword] = useState('');
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
   const [lastSync, setLastSync] = useState<string>('未同步');
+  const [avatar, setAvatar] = useState<string>(() => localStorage.getItem(AVATAR_KEY) || '');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const appVersion = '1.1.13';
 
@@ -43,26 +43,20 @@ export const Settings: React.FC = () => {
     fetchLastSync();
   }, [user]);
 
-  const handleUpdatePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !newPassword) return;
-    setLoading(true);
-    setMessage('');
-    setError('');
-    try {
-      await updatePassword(user, newPassword);
-      setMessage('密碼更新成功');
-      setNewPassword('');
-    } catch (err: any) {
-      if (err.code === 'auth/requires-recent-login') {
-        setError('請重新登入後再修改密碼');
-      } else {
-        setError(err.message);
-      }
-    } finally {
-      setLoading(false);
-    }
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      setAvatar(base64);
+      localStorage.setItem(AVATAR_KEY, base64);
+    };
+    reader.readAsDataURL(file);
   };
+
+  // 頭像優先順序：用戶上傳 > Google 頭像 > 預設
+  const avatarSrc = avatar || user?.photoURL || '';
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -82,37 +76,46 @@ export const Settings: React.FC = () => {
       <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 bg-[#007AFF] rounded-[12px] flex items-center justify-center text-white">
-              <span className="text-lg">👤</span>
-            </div>
+
+            {/* 可點擊頭像 */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="relative w-12 h-12 rounded-[14px] overflow-hidden bg-[#F2F2F7] flex items-center justify-center flex-shrink-0 active:scale-90 transition-all"
+            >
+              {avatarSrc ? (
+                <img src={avatarSrc} alt="頭像" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl">👤</span>
+              )}
+              {/* 相機覆蓋層 */}
+              <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 hover:opacity-100 active:opacity-100 transition-opacity">
+                <Camera className="w-4 h-4 text-white" />
+              </div>
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleAvatarChange}
+            />
+
             <div>
               <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">當前帳號</p>
               <p className="text-[14px] font-semibold text-slate-900">{user?.email}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">點擊頭像更換相片</p>
             </div>
           </div>
-          <button onClick={() => signOut(auth)} className="p-2.5 bg-rose-50 text-rose-500 rounded-[10px] active:scale-90 transition-all">
+
+          <button
+            onClick={() => signOut(auth)}
+            className="p-2.5 bg-rose-50 text-rose-500 rounded-[10px] active:scale-90 transition-all"
+            title="登出"
+          >
             <LogOut className="w-4 h-4" />
           </button>
         </div>
-      </div>
-
-      {/* 安全設定 */}
-      <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm space-y-4">
-        <div className="flex items-center gap-2">
-          <Shield className="w-4 h-4 text-[#007AFF]" />
-          <h3 className="text-[13px] font-semibold text-slate-700">安全性設定</h3>
-        </div>
-        <form onSubmit={handleUpdatePassword} className="space-y-3">
-          <input type="password" placeholder="新密碼 (至少 6 位數)" value={newPassword}
-            onChange={e => setNewPassword(e.target.value)}
-            className="w-full px-4 py-3 bg-[#F2F2F7] rounded-[14px] outline-none focus:ring-2 focus:ring-sky-400 font-semibold text-sm transition-all" />
-          <button type="submit" disabled={loading}
-            className="w-full py-4 bg-[#1C1C1E] text-white rounded-[14px] font-bold text-[14px] disabled:opacity-50 active:scale-[0.98] transition-all">
-            {loading ? '處理中...' : '更新密碼'}
-          </button>
-          {message && <p className="text-emerald-600 text-[12px] font-semibold text-center bg-emerald-50 py-2 rounded-[10px]">{message}</p>}
-          {error   && <p className="text-rose-500   text-[12px] font-semibold text-center bg-rose-50   py-2 rounded-[10px]">{error}</p>}
-        </form>
       </div>
 
       {/* 系統資訊 */}

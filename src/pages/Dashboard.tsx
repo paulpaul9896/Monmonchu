@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   collection, query, where, onSnapshot, addDoc,
   serverTimestamp, deleteDoc, doc, updateDoc
@@ -59,6 +59,37 @@ export const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // 月薪自動注入（每次進入帳本頁，確保本月 1 號有一筆月薪收入）
+  const salaryCheckedRef = useRef(false);
+  useEffect(() => {
+    if (loading || !user || salaryCheckedRef.current) return;
+    salaryCheckedRef.current = true;
+
+    const salaryAmt = parseFloat(localStorage.getItem('monmon_m_salary') || '0');
+    if (salaryAmt <= 0) return;
+
+    const today = new Date();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const firstOfMonth = `${today.getFullYear()}-${mm}-01`;
+
+    const hasSalary = transactions.some(
+      t => t.dateStr === firstOfMonth && t.type === 'income' && t.category === '月薪'
+    );
+    if (!hasSalary) {
+      addDoc(collection(db, 'expenses'), {
+        amount: salaryAmt,
+        category: '月薪',
+        type: 'income' as const,
+        remark: '月薪自動記錄',
+        dateStr: firstOfMonth,
+        userId: user.uid,
+        isSalaryAuto: true,
+        createdAt: serverTimestamp(),
+      }).catch(console.error);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user?.uid, transactions.length]);
+
   // 預算 state
   const [monthlyBudget, setMonthlyBudget] = useState<number>(() =>
     parseFloat(localStorage.getItem('monmon_budget') || '0')
@@ -83,6 +114,9 @@ export const Dashboard: React.FC = () => {
     return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
   });
   const [isEditingCategories, setIsEditingCategories] = useState(false);
+
+  // 最近紀錄篩選器
+  const [listFilter, setListFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
   useEffect(() => {
     fetch('https://open.er-api.com/v6/latest/HKD')
@@ -182,12 +216,20 @@ export const Dashboard: React.FC = () => {
     end:   endOfWeek(endOfMonth(monthStart)),
   });
 
-  const getDayTotal = (day: Date) => {
+  // 返回當天收入、支出與淨額
+  const getDayAmounts = (day: Date) => {
     const ds = format(day, 'yyyy-MM-dd');
-    return transactions
-      .filter(t => t.dateStr === ds)
-      .reduce((a, t) => a + (t.type === 'income' ? t.amount : -t.amount), 0);
+    const dayTxns = transactions.filter(t => t.dateStr === ds);
+    const income  = dayTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const expense = dayTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    return { income, expense, net: income - expense };
   };
+
+  // 日曆格內金額縮寫
+  const fmtCalAmt = (n: number) =>
+    n >= 10000 ? `${(n / 1000).toFixed(0)}k`
+    : n >= 1000 ? `${(n / 1000).toFixed(1)}k`
+    : `${Math.round(n)}`;
 
   // 統計計算
   const stats = transactions.reduce((acc, t) => {
@@ -341,31 +383,56 @@ export const Dashboard: React.FC = () => {
           {calendarDays.map((day, i) => {
             const isSelected  = isSameDay(day, selectedDate);
             const isToday     = isSameDay(day, new Date());
-            const total       = getDayTotal(day);
             const isThisMonth = day.getMonth() === currentMonth.getMonth();
+            const { income, expense, net } = getDayAmounts(day);
+            const hasIncome  = income > 0;
+            const hasExpense = expense > 0;
             return (
               <button
                 key={i}
                 onClick={() => setSelectedDate(day)}
                 className={cn(
-                  "relative aspect-square flex flex-col items-center justify-between py-1 rounded-xl transition-all",
-                  isSelected  ? "bg-[#007AFF] text-white shadow-md shadow-blue-200"
-                              : isToday ? "bg-blue-50 text-[#007AFF]"
-                              : "hover:bg-slate-50 text-slate-800",
+                  "flex flex-col items-center py-1.5 rounded-[10px] transition-all gap-[3px] min-h-[44px]",
+                  isSelected  ? "bg-[#007AFF] shadow-md shadow-blue-200"
+                              : isToday ? "bg-blue-50"
+                              : "hover:bg-slate-50",
                   !isThisMonth && !isSelected && "opacity-25"
                 )}
               >
-                <span className="text-[11px] font-semibold leading-none">{format(day, 'd')}</span>
-                {total !== 0 && (
-                  <span className={cn(
-                    "text-[7px] font-bold leading-tight w-full text-center px-0.5",
-                    isSelected ? "text-white/80"
-                               : total > 0 ? "text-emerald-500" : "text-rose-400"
-                  )}>
-                    {total >= 10000 ? `${(total / 1000).toFixed(0)}k`
-                      : total >= 1000 ? `${(total / 1000).toFixed(1)}k`
-                      : Math.round(Math.abs(total))}
-                  </span>
+                {/* 日期數字 */}
+                <span className={cn(
+                  "text-[12px] font-bold leading-none",
+                  isSelected ? "text-white" : isToday ? "text-[#007AFF]" : "text-slate-800"
+                )}>
+                  {format(day, 'd')}
+                </span>
+
+                {/* 金額 badges：收入綠 / 支出紅，選中時用半透明白色 */}
+                <div className="flex flex-col items-center gap-[2px] w-full px-0.5">
+                  {hasIncome && (
+                    <span className={cn(
+                      "text-[6.5px] font-black leading-none rounded-full px-1 py-[1.5px] w-full text-center",
+                      isSelected ? "bg-white/25 text-white" : "bg-emerald-50 text-emerald-600"
+                    )}>
+                      +{fmtCalAmt(income)}
+                    </span>
+                  )}
+                  {hasExpense && (
+                    <span className={cn(
+                      "text-[6.5px] font-black leading-none rounded-full px-1 py-[1.5px] w-full text-center",
+                      isSelected ? "bg-white/20 text-white/90" : "bg-rose-50 text-rose-500"
+                    )}>
+                      -{fmtCalAmt(expense)}
+                    </span>
+                  )}
+                </div>
+
+                {/* 淨額點（只在有混合收支時顯示，作為底部指示點）*/}
+                {hasIncome && hasExpense && (
+                  <div className={cn(
+                    "w-1 h-1 rounded-full flex-shrink-0",
+                    isSelected ? "bg-white/50" : net >= 0 ? "bg-emerald-400" : "bg-rose-400"
+                  )} />
                 )}
               </button>
             );
@@ -544,8 +611,45 @@ export const Dashboard: React.FC = () => {
 
       {/* ══ 最近紀錄 ══ */}
       <div className="space-y-2 pb-24">
-        <h3 className="text-[13px] font-semibold text-slate-400 px-1 mb-1">最近紀錄</h3>
-        {transactions.map(t => (
+        {/* 標題 + 篩選器 */}
+        <div className="flex items-center justify-between px-1 mb-2">
+          <h3 className="text-[13px] font-semibold text-slate-400">最近紀錄</h3>
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
+          {([ 
+            { id: 'all',   label: '全部' },
+            { id: 'today', label: '今天' },
+            { id: 'week',  label: '本週' },
+            { id: 'month', label: '本月' },
+          ] as const).map(({ id, label }) => (
+            <button
+              key={id}
+              onClick={() => setListFilter(id)}
+              className={cn(
+                "px-3.5 py-1.5 rounded-full text-[12px] font-semibold whitespace-nowrap transition-all flex-shrink-0",
+                listFilter === id
+                  ? "bg-[#1C1C1E] text-white"
+                  : "bg-white text-slate-500 border border-black/[0.06] shadow-sm"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {(() => {
+          const now = new Date();
+          const filtered = listFilter === 'all' ? transactions : transactions.filter(t => {
+            const d = parseLocalDate(t.dateStr);
+            if (listFilter === 'today') return isSameDay(d, now);
+            if (listFilter === 'week')  return d >= startOfWeek(now) && d <= endOfWeek(now);
+            if (listFilter === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+            return true;
+          });
+          if (filtered.length === 0) return (
+            <div className="py-10 text-center text-slate-300 italic text-sm">此時段沒有記錄</div>
+          );
+          return filtered.map(t => (
           <div
             key={t.id}
             className="group bg-white rounded-[20px] border border-black/[0.05] shadow-sm px-4 py-3.5 flex items-center justify-between"
@@ -597,7 +701,8 @@ export const Dashboard: React.FC = () => {
               </div>
             </div>
           </div>
-        ))}
+          ));
+        })()}
       </div>
 
       {/* ══ 支出分佈圖 ══ */}

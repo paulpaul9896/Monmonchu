@@ -180,9 +180,12 @@ export const SplitBill: React.FC = () => {
       payer: itemPayer,
       participants: itemParts,
       date: itemDate,
-      originalAmount: originalAmount ? parseFloat(originalAmount) : undefined,
-      originalCurrency: originalAmount ? fromCurrency : undefined,
-      exchangeRate: originalAmount ? (1 / rates[fromCurrency]) : undefined,
+      // 只在有外幣換算時才加入這三個欄位；undefined 會被 Firestore 拒絕
+      ...(originalAmount ? {
+        originalAmount: parseFloat(originalAmount),
+        originalCurrency: fromCurrency,
+        exchangeRate: 1 / rates[fromCurrency],
+      } : {}),
     };
 
     let updatedItems = [...activeProject.items];
@@ -518,12 +521,11 @@ export const SplitBill: React.FC = () => {
               </div>
 
               {/* 日期（緊湊，不佔整頁）*/}
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 min-w-0 overflow-hidden">
                 <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">日期</label>
-                {/* 用 max-w 限制寬度，iOS date input 不會撐整行 */}
                 <input type="date" value={itemDate}
                   onChange={e => { if (e.target.value) setItemDate(e.target.value); }}
-                  className="w-full px-4 py-3 bg-[#F2F2F7] rounded-[14px] outline-none focus:ring-2 focus:ring-emerald-400 font-semibold text-sm text-slate-900 transition-all" />
+                  className="w-full min-w-0 max-w-full px-4 py-3 bg-[#F2F2F7] rounded-[14px] outline-none focus:ring-2 focus:ring-emerald-400 font-semibold text-sm text-slate-900 transition-all" />
               </div>
 
               {/* 提交 */}

@@ -1,7 +1,5 @@
 import React from 'react';
-import { LogOut, LayoutDashboard, Users, Repeat, Globe, Settings } from 'lucide-react';
-import { auth } from '../lib/firebase';
-import { signOut } from 'firebase/auth';
+import { LayoutDashboard, Users, Repeat, Globe, Settings } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface LayoutProps {
@@ -23,32 +21,8 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#F2F2F7' }}>
 
-      {/* ── Header：毛玻璃效果，Apple Wallet 風格 ── */}
-      <header className="fixed top-0 left-0 right-0 z-40 bg-white/75 backdrop-blur-2xl border-b border-black/[0.06]">
-        <div className="max-w-2xl mx-auto px-5 h-[60px] flex items-center justify-between">
-          <button
-            onClick={() => setActiveTab('expenses')}
-            className="flex items-center active:opacity-70 transition-opacity"
-          >
-            <img
-              src={`${import.meta.env.BASE_URL}logo.png`}
-              alt="MonMonChu"
-              className="h-10 w-auto object-contain"
-            />
-          </button>
-
-          <button
-            onClick={() => signOut(auth)}
-            className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-700 active:opacity-60 transition-all"
-            title="登出"
-          >
-            <LogOut className="w-[18px] h-[18px]" />
-          </button>
-        </div>
-      </header>
-
       {/* ── Main Content ── */}
-      <main className="flex-1 pt-[76px] pb-[100px] px-4 max-w-2xl mx-auto w-full overflow-x-hidden">
+      <main className="flex-1 pt-6 pb-[100px] px-4 max-w-2xl mx-auto w-full overflow-x-hidden">
         {children}
       </main>
 
