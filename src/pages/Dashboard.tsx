@@ -28,6 +28,7 @@ interface Transaction {
   userId: string;
   foreignAmount?: number;
   foreignCurrency?: string;
+  recurringId?: string; // 標記為定期項目自動生成（用於排除重複計算）
 }
 
 const COLORS = ['#007AFF', '#FF3B30', '#34C759', '#FF9500', '#AF52DE', '#FF2D55'];
@@ -116,7 +117,8 @@ export const Dashboard: React.FC = () => {
   const [isEditingCategories, setIsEditingCategories] = useState(false);
 
   // 最近紀錄篩選器
-  const [listFilter, setListFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const [listFilter, setListFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
+  const [customFilterDate, setCustomFilterDate] = useState<string>('');
 
   useEffect(() => {
     fetch('https://open.er-api.com/v6/latest/HKD')
@@ -209,6 +211,64 @@ export const Dashboard: React.FC = () => {
     setAmount((parseFloat(foreignAmount) / rates[selectedCurrency]).toFixed(2));
   };
 
+  // 排除定期自動生成記錄，僅保留手動記帳（防止雙重計算）
+  const manualTransactions = transactions.filter(t => !t.recurringId);
+
+  // 將 recurringItems 展開成虛擬交易行（日期 <= 今天的每一次發生）
+  const recurringVirtualTxns: (Transaction & { isRecurring: boolean })[] = (() => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const result: (Transaction & { isRecurring: boolean })[] = [];
+
+    recurringItems.forEach((item: any) => {
+      if (!item.date) return;
+      const [sy, sm, sd] = (item.date as string).split('-').map(Number);
+
+      const push = (yr: number, mo: number) => {
+        const dateStr = `${yr}-${String(mo).padStart(2, '0')}-${String(sd).padStart(2, '0')}`;
+        if (dateStr > todayStr) return false; // 未來日期跳過
+        // 超出結束月份
+        if (item.endType === 'date' && item.endDate) {
+          const [ey, em] = (item.endDate as string).split('-').map(Number);
+          if (yr > ey || (yr === ey && mo > em)) return false;
+        }
+        result.push({
+          id: `rec-${item.id}-${dateStr}`,
+          amount: item.amount,
+          category: item.name,
+          type: item.type,
+          dateStr,
+          remark: item.name,
+          userId: item.userId || '',
+          isRecurring: true,
+        });
+        return true;
+      };
+
+      if (item.freq === 'monthly') {
+        let yr = sy, mo = sm;
+        for (let limit = 0; limit < 120; limit++) { // 最多 10 年
+          if (!push(yr, mo)) break;
+          mo++; if (mo > 12) { mo = 1; yr++; }
+        }
+      } else { // yearly
+        for (let yr = sy; yr <= new Date().getFullYear() + 1; yr++) {
+          if (!push(yr, sm)) break;
+        }
+      }
+    });
+    return result;
+  })();
+
+  // 合併手動記帳 + 虛擬定期記錄，按日期新→舊排序
+  const allDisplayTxns = [
+    ...manualTransactions.map(t => ({ ...t, isRecurring: false })),
+    ...recurringVirtualTxns,
+  ].sort((a, b) => {
+    // 同日期時，手動記帳在前（createdAt 排序已在 manualTransactions 中保留）
+    if (b.dateStr !== a.dateStr) return b.dateStr.localeCompare(a.dateStr);
+    return a.isRecurring ? 1 : -1;
+  });
+
   // 日曆資料
   const monthStart  = startOfMonth(currentMonth);
   const calendarDays = eachDayOfInterval({
@@ -216,13 +276,50 @@ export const Dashboard: React.FC = () => {
     end:   endOfWeek(endOfMonth(monthStart)),
   });
 
-  // 返回當天收入、支出與淨額
+  // ── 計算定期項目在指定日期的收入/支出貢獻 ──
+  const getRecurringAmountsForDay = (day: Date) => {
+    const dom = day.getDate();       // day of month
+    const mo  = day.getMonth() + 1; // 1-indexed month
+    const yr  = day.getFullYear();
+    let income = 0, expense = 0;
+
+    recurringItems.forEach((item: any) => {
+      if (!item.date) return;
+      const [sy, sm, sd] = (item.date as string).split('-').map(Number);
+
+      // 未到生效日
+      if (yr < sy || (yr === sy && mo < sm) || (yr === sy && mo === sm && dom < sd)) return;
+
+      // 超出結束月份
+      if (item.endType === 'date' && item.endDate) {
+        const [ey, em] = (item.endDate as string).split('-').map(Number);
+        if (yr > ey || (yr === ey && mo > em)) return;
+      }
+
+      const matches =
+        (item.freq === 'monthly' && dom === sd) ||
+        (item.freq === 'yearly'  && dom === sd && mo === sm);
+
+      if (matches) {
+        if (item.type === 'income') income += item.amount;
+        else expense += item.amount;
+      }
+    });
+    return { income, expense };
+  };
+
+  // ── 每天金額（手動記帳 + 定期貢獻合併）──
   const getDayAmounts = (day: Date) => {
     const ds = format(day, 'yyyy-MM-dd');
-    const dayTxns = transactions.filter(t => t.dateStr === ds);
-    const income  = dayTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const expense = dayTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    return { income, expense, net: income - expense };
+    const dayTxns    = manualTransactions.filter(t => t.dateStr === ds);
+    const txnIncome  = dayTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const txnExpense = dayTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const { income: recInc, expense: recExp } = getRecurringAmountsForDay(day);
+    return {
+      income:  txnIncome  + recInc,
+      expense: txnExpense + recExp,
+      net:    (txnIncome  + recInc) - (txnExpense + recExp),
+    };
   };
 
   // 日曆格內金額縮寫
@@ -231,8 +328,8 @@ export const Dashboard: React.FC = () => {
     : n >= 1000 ? `${(n / 1000).toFixed(1)}k`
     : `${Math.round(n)}`;
 
-  // 統計計算
-  const stats = transactions.reduce((acc, t) => {
+  // 統計計算（手動記帳部分）
+  const manualStats = manualTransactions.reduce((acc, t) => {
     if (t.type === 'expense') {
       const d = parseLocalDate(t.dateStr);
       if (isSameDay(d, selectedDate))
@@ -244,6 +341,47 @@ export const Dashboard: React.FC = () => {
     }
     return acc;
   }, { daily: 0, monthly: 0, yearly: 0 });
+
+  // 統計計算（定期項目部分）
+  const recurringStats = (() => {
+    const yr  = currentMonth.getFullYear();
+    const mo  = currentMonth.getMonth() + 1; // 1-indexed
+    let daily = 0, monthly = 0, yearly = 0;
+
+    recurringItems.forEach((item: any) => {
+      if (!item.date || item.type !== 'expense') return;
+      const [sy, sm, sd] = (item.date as string).split('-').map(Number);
+
+      // 超出結束月份
+      if (item.endType === 'date' && item.endDate) {
+        const [ey, em] = (item.endDate as string).split('-').map(Number);
+        if (yr > ey || (yr === ey && mo > em)) return;
+      }
+
+      if (item.freq === 'monthly') {
+        // 未達生效月份
+        if (yr < sy || (yr === sy && mo < sm)) return;
+        monthly += item.amount;
+        yearly  += item.amount;
+        // 今日統計：選中日期是否為本月該日
+        if (isSameDay(new Date(yr, mo - 1, sd), selectedDate)) daily += item.amount;
+
+      } else { // yearly
+        if (yr < sy || mo !== sm) return; // 未到或不在本月
+        monthly += item.amount;
+        yearly  += item.amount;
+        if (isSameDay(new Date(yr, sm - 1, sd), selectedDate)) daily += item.amount;
+      }
+    });
+    return { daily, monthly, yearly };
+  })();
+
+  // 合併手動 + 定期統計
+  const stats = {
+    daily:   manualStats.daily   + recurringStats.daily,
+    monthly: manualStats.monthly + recurringStats.monthly,
+    yearly:  manualStats.yearly  + recurringStats.yearly,
+  };
 
   const totalBalance =
     transactions.reduce((a, t) => a + (t.type === 'income' ? t.amount : -t.amount), 0) +
@@ -615,12 +753,14 @@ export const Dashboard: React.FC = () => {
         <div className="flex items-center justify-between px-1 mb-2">
           <h3 className="text-[13px] font-semibold text-slate-400">最近紀錄</h3>
         </div>
+        {/* 篩選 pills */}
         <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
-          {([ 
-            { id: 'all',   label: '全部' },
-            { id: 'today', label: '今天' },
-            { id: 'week',  label: '本週' },
-            { id: 'month', label: '本月' },
+          {([
+            { id: 'all',    label: '全部' },
+            { id: 'today',  label: '今天' },
+            { id: 'week',   label: '本週' },
+            { id: 'month',  label: '本月' },
+            { id: 'custom', label: '📅 揀日期' },
           ] as const).map(({ id, label }) => (
             <button
               key={id}
@@ -637,70 +777,94 @@ export const Dashboard: React.FC = () => {
           ))}
         </div>
 
+        {/* 自訂日期輸入（只在選 揀日期 時顯示）*/}
+        {listFilter === 'custom' && (
+          <div className="min-w-0 overflow-hidden">
+            <input
+              type="date"
+              value={customFilterDate}
+              onChange={e => setCustomFilterDate(e.target.value)}
+              className="w-full min-w-0 max-w-full px-4 py-2.5 bg-white border border-black/[0.08] rounded-[14px] outline-none focus:border-[#007AFF] font-semibold text-sm text-slate-900 shadow-sm transition-all"
+            />
+          </div>
+        )}
+
         {(() => {
           const now = new Date();
-          const filtered = listFilter === 'all' ? transactions : transactions.filter(t => {
+          const filtered = allDisplayTxns.filter(t => {
+            if (listFilter === 'all')    return true;
             const d = parseLocalDate(t.dateStr);
-            if (listFilter === 'today') return isSameDay(d, now);
-            if (listFilter === 'week')  return d >= startOfWeek(now) && d <= endOfWeek(now);
-            if (listFilter === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+            if (listFilter === 'today')  return isSameDay(d, now);
+            if (listFilter === 'week')   return d >= startOfWeek(now) && d <= endOfWeek(now);
+            if (listFilter === 'month')  return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+            if (listFilter === 'custom') return customFilterDate ? t.dateStr === customFilterDate : true;
             return true;
           });
           if (filtered.length === 0) return (
             <div className="py-10 text-center text-slate-300 italic text-sm">此時段沒有記錄</div>
           );
           return filtered.map(t => (
-          <div
-            key={t.id}
-            className="group bg-white rounded-[20px] border border-black/[0.05] shadow-sm px-4 py-3.5 flex items-center justify-between"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className={cn("w-10 h-10 rounded-[12px] flex items-center justify-center flex-shrink-0",
-                t.type === 'income' ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'
-              )}>
-                {t.type === 'income' ? <ArrowUpCircle className="w-5 h-5" /> : <ArrowDownCircle className="w-5 h-5" />}
-              </div>
-              <div className="min-w-0">
-                <p className="font-semibold text-[15px] text-slate-900 truncate">
-                  {t.remark || t.category}
-                </p>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[11px] text-slate-400 font-medium">{t.category}</span>
-                  <span className="text-slate-200">·</span>
-                  <span className="text-[11px] text-slate-300">{t.dateStr}</span>
-                  {t.foreignAmount && (
-                    <span className="text-[9px] text-slate-300 bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100">
-                      {t.foreignCurrency} {t.foreignAmount.toLocaleString()}
-                    </span>
-                  )}
+            <div
+              key={t.id}
+              className="group bg-white rounded-[20px] border border-black/[0.05] shadow-sm px-4 py-3.5 flex items-center justify-between"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={cn("w-10 h-10 rounded-[12px] flex items-center justify-center flex-shrink-0",
+                  t.type === 'income' ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'
+                )}>
+                  {t.type === 'income' ? <ArrowUpCircle className="w-5 h-5" /> : <ArrowDownCircle className="w-5 h-5" />}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-semibold text-[15px] text-slate-900 truncate">
+                      {t.remark || t.category}
+                    </p>
+                    {t.isRecurring && (
+                      <span className="text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                        定期
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-[11px] text-slate-400 font-medium">{t.category}</span>
+                    <span className="text-slate-200">·</span>
+                    <span className="text-[11px] text-slate-300">{t.dateStr}</span>
+                    {t.foreignAmount && (
+                      <span className="text-[9px] text-slate-300 bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100">
+                        {t.foreignCurrency} {t.foreignAmount.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* 金額 + 操作按鈕（手機版永遠可見） */}
-            <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-              <p className={cn("font-bold text-[15px] tabular-nums",
-                t.type === 'income' ? 'text-emerald-500' : 'text-slate-900'
-              )}>
-                {t.type === 'income' ? '+' : ''}${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </p>
-              {/* 桌面版 hover 顯示，手機版一直可見 */}
-              <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-all">
-                <button
-                  onClick={() => handleEdit(t)}
-                  className="p-1.5 bg-slate-50 hover:bg-sky-50 text-slate-400 hover:text-sky-500 active:text-sky-500 rounded-lg transition-all"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => { if (confirm('確定刪除此紀錄？')) handleDelete(t.id); }}
-                  className="p-1.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-500 active:text-rose-500 rounded-lg transition-all"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+              <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                <p className={cn("font-bold text-[15px] tabular-nums",
+                  t.type === 'income' ? 'text-emerald-500' : 'text-slate-900'
+                )}>
+                  {t.type === 'income' ? '+' : ''}${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </p>
+                {/* 手動記帳：顯示編輯/刪除按鈕；定期項目：等寬佔位保持金額對齊 */}
+                {t.isRecurring ? (
+                  <div className="w-14 flex-shrink-0" />
+                ) : (
+                  <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-all">
+                    <button
+                      onClick={() => handleEdit(t)}
+                      className="p-1.5 bg-slate-50 hover:bg-sky-50 text-slate-400 hover:text-sky-500 active:text-sky-500 rounded-lg transition-all"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => { if (confirm('確定刪除此紀錄？')) handleDelete(t.id); }}
+                      className="p-1.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-500 active:text-rose-500 rounded-lg transition-all"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
           ));
         })()}
       </div>
