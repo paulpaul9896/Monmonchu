@@ -7,6 +7,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType, cn } from '../lib/utils';
 import { Repeat, Trash2, ArrowUpCircle, ArrowDownCircle, Pencil } from 'lucide-react';
+import { BackupActions } from '../components/BackupActions';
 import { format } from 'date-fns';
 
 const todayStr = () => format(new Date(), 'yyyy-MM-dd');
@@ -247,6 +248,9 @@ export const Recurring: React.FC = () => {
         <div className="pointer-events-none absolute -top-16 -right-16 w-48 h-48 rounded-full opacity-15"
           style={{ background: 'radial-gradient(circle, #fff, transparent)' }} />
         <div className="relative z-10">
+          <div className="flex justify-end mb-2">
+            <BackupActions variant="compact" showDownload={false} />
+          </div>
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
               <p className="text-[10px] font-semibold text-white/50 uppercase tracking-widest mb-1">月度淨餘額</p>

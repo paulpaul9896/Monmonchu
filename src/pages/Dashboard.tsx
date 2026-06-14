@@ -11,6 +11,7 @@ import {
   Trash2, ArrowUpCircle, ArrowDownCircle, Globe,
   Pencil, X, ChevronLeft, ChevronRight
 } from 'lucide-react';
+import { BackupActions } from '../components/BackupActions';
 import {
   format, isSameDay, startOfMonth, endOfMonth,
   eachDayOfInterval, startOfWeek, endOfWeek,
@@ -39,6 +40,17 @@ const fmtAmt = (n: number) => {
   if (n >= 10_000)    return `$${(n / 1_000).toFixed(0)}k`;
   if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}k`;
   return `$${n.toLocaleString()}`;
+};
+
+const fmtAmtFull = (n: number) =>
+  `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const FILTER_LABELS: Record<'all' | 'today' | 'week' | 'month' | 'custom', string> = {
+  all: '全部',
+  today: '今天',
+  week: '本週',
+  month: '本月',
+  custom: '指定日期',
 };
 
 // YYYY-MM-DD 字串轉本地 Date（避免 UTC 偏移問題）
@@ -119,6 +131,17 @@ export const Dashboard: React.FC = () => {
   // 最近紀錄篩選器
   const [listFilter, setListFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
   const [customFilterDate, setCustomFilterDate] = useState<string>('');
+
+  // 上方統計：點擊顯示完整尾數
+  const [expandedStats, setExpandedStats] = useState<Set<string>>(new Set());
+  const toggleStatExpand = (key: string) => {
+    setExpandedStats(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetch('https://open.er-api.com/v6/latest/HKD')
@@ -390,10 +413,31 @@ export const Dashboard: React.FC = () => {
       return a + (r.type === 'income' ? v : -v);
     }, 0);
 
+  const matchesListFilter = (dateStr: string) => {
+    const now = new Date();
+    const d = parseLocalDate(dateStr);
+    if (listFilter === 'all') return true;
+    if (listFilter === 'today') return isSameDay(d, now);
+    if (listFilter === 'week') return d >= startOfWeek(now) && d <= endOfWeek(now);
+    if (listFilter === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    if (listFilter === 'custom') return customFilterDate ? dateStr === customFilterDate : true;
+    return true;
+  };
+
+  const filteredExpenses = allDisplayTxns.filter(
+    t => t.type === 'expense' && matchesListFilter(t.dateStr)
+  );
+
+  const filteredTotalExpense = filteredExpenses.reduce((s, t) => s + t.amount, 0);
+
   const chartData = Object.entries(
-    transactions.filter(t => t.type === 'expense')
-      .reduce((a, t) => { a[t.category] = (a[t.category] || 0) + t.amount; return a; }, {} as Record<string, number>)
+    filteredExpenses.reduce((a, t) => { a[t.category] = (a[t.category] || 0) + t.amount; return a; }, {} as Record<string, number>)
   ).map(([name, value]) => ({ name, value }));
+
+  const filterDisplayLabel =
+    listFilter === 'custom' && customFilterDate ? customFilterDate : FILTER_LABELS[listFilter];
+
+  const isFilterActive = listFilter !== 'all' && (listFilter !== 'custom' || !!customFilterDate);
 
   // 保存預算
   const saveBudget = () => {
@@ -419,6 +463,8 @@ export const Dashboard: React.FC = () => {
           {/* 頂部：標題 + 設定預算按鈕 */}
           <div className="flex items-start justify-between mb-4">
             <p className="text-[11px] font-semibold tracking-[0.15em] text-white/50 uppercase">淨資產變動 (HKD)</p>
+            <div className="flex items-center gap-1.5">
+            <BackupActions variant="compact" showDownload={false} />
             {isEditingBudget ? (
               <div className="flex items-center gap-1.5 bg-white/10 rounded-2xl p-1 border border-white/10">
                 <input
@@ -441,6 +487,7 @@ export const Dashboard: React.FC = () => {
                 {monthlyBudget > 0 ? `預算 $${monthlyBudget.toLocaleString()}` : '設定預算'}
               </button>
             )}
+            </div>
           </div>
 
           {/* 大金額顯示：用 clamp 控制字型，完全不換行 */}
@@ -484,16 +531,26 @@ export const Dashboard: React.FC = () => {
 
           {/* 今日 / 本月 / 今年 三格統計 */}
           <div className="grid grid-cols-3 gap-2">
-            {[
-              { label: '今日支出', val: stats.daily },
-              { label: '本月支出', val: stats.monthly },
-              { label: '今年支出', val: stats.yearly },
-            ].map(({ label, val }) => (
-              <div key={label} className="bg-white/8 rounded-[16px] p-3 text-center" style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}>
+            {([
+              { key: 'daily', label: '今日支出', val: stats.daily },
+              { key: 'monthly', label: '本月支出', val: stats.monthly },
+              { key: 'yearly', label: '今年支出', val: stats.yearly },
+            ] as const).map(({ key, label, val }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => toggleStatExpand(key)}
+                className="bg-white/8 rounded-[16px] p-3 text-center active:scale-95 transition-all"
+                style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}
+              >
                 <p className="text-[8px] font-semibold text-white/40 uppercase tracking-widest mb-1.5 leading-tight">{label}</p>
-                {/* fmtAmt 防止大數字 overflow */}
-                <p className="font-black text-white tabular-nums text-sm leading-none">{fmtAmt(val)}</p>
-              </div>
+                <p className={cn(
+                  "font-black text-white tabular-nums leading-none transition-all",
+                  expandedStats.has(key) ? "text-[11px]" : "text-sm"
+                )}>
+                  {expandedStats.has(key) ? fmtAmtFull(val) : fmtAmt(val)}
+                </p>
+              </button>
             ))}
           </div>
         </div>
@@ -790,16 +847,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {(() => {
-          const now = new Date();
-          const filtered = allDisplayTxns.filter(t => {
-            if (listFilter === 'all')    return true;
-            const d = parseLocalDate(t.dateStr);
-            if (listFilter === 'today')  return isSameDay(d, now);
-            if (listFilter === 'week')   return d >= startOfWeek(now) && d <= endOfWeek(now);
-            if (listFilter === 'month')  return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-            if (listFilter === 'custom') return customFilterDate ? t.dateStr === customFilterDate : true;
-            return true;
-          });
+          const filtered = allDisplayTxns.filter(t => matchesListFilter(t.dateStr));
           if (filtered.length === 0) return (
             <div className="py-10 text-center text-slate-300 italic text-sm">此時段沒有記錄</div>
           );
@@ -870,30 +918,51 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* ══ 支出分佈圖 ══ */}
-      {chartData.length > 0 && (
+      {(chartData.length > 0 || isFilterActive) && (
         <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm mb-8">
-          <h3 className="text-[13px] font-semibold text-slate-400 mb-4 text-center">支出分佈</h3>
-          <div className="w-full h-44">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={chartData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={4} dataKey="value">
-                  {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                </Pie>
-                <Tooltip formatter={(v: number) => [`$${v.toLocaleString()}`, '']} />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-[13px] font-semibold text-slate-400">支出分佈</h3>
+            {isFilterActive && (
+              <span className="text-[10px] font-semibold text-sky-600 bg-sky-50 px-2 py-0.5 rounded-full">
+                {filterDisplayLabel}
+              </span>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-3 px-2">
-            {chartData.map((item, i) => (
-              <div key={item.name} className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                  <span className="text-[12px] font-medium text-slate-500 truncate">{item.name}</span>
-                </div>
-                <span className="text-[12px] font-bold text-slate-900 tabular-nums">{fmtAmt(item.value)}</span>
+          <div className="flex items-baseline justify-center gap-1.5 mb-4">
+            <span className="text-[11px] font-semibold text-slate-400">
+              {isFilterActive ? `${filterDisplayLabel}總支出` : '總支出'}
+            </span>
+            <span className="text-[18px] font-black text-slate-900 tabular-nums">
+              {fmtAmtFull(filteredTotalExpense)}
+            </span>
+          </div>
+          {chartData.length > 0 ? (
+            <>
+              <div className="w-full h-44">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={chartData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={4} dataKey="value">
+                      {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={(v: number) => [fmtAmtFull(v), '']} />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-          </div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-3 px-2">
+                {chartData.map((item, i) => (
+                  <div key={item.name} className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                      <span className="text-[12px] font-medium text-slate-500 truncate">{item.name}</span>
+                    </div>
+                    <span className="text-[12px] font-bold text-slate-900 tabular-nums">{fmtAmt(item.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-center text-slate-300 italic text-sm py-8">此條件下沒有支出紀錄</p>
+          )}
         </div>
       )}
     </div>

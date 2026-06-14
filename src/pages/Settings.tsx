@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { Settings as SettingsIcon, Clock, Info, LogOut, Camera } from 'lucide-react';
+import { Settings as SettingsIcon, Clock, Info, LogOut, Camera, Database } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { BackupActions } from '../components/BackupActions';
 
 const AVATAR_KEY = 'monmon_avatar';
 
@@ -116,6 +117,15 @@ export const Settings: React.FC = () => {
             <LogOut className="w-4 h-4" />
           </button>
         </div>
+      </div>
+
+      {/* 資料備份 */}
+      <div className="bg-white rounded-[24px] p-5 border border-black/[0.05] shadow-sm space-y-4">
+        <div className="flex items-center gap-2">
+          <Database className="w-4 h-4 text-slate-400" />
+          <h3 className="text-[13px] font-semibold text-slate-700">資料備份</h3>
+        </div>
+        <BackupActions variant="full" />
       </div>
 
       {/* 系統資訊 */}

@@ -10,6 +10,7 @@ import {
   Plus, Trash2, ArrowRight, UserPlus, Pencil,
   QrCode, Copy, ChevronLeft, ChevronRight, X, Scan, Globe
 } from 'lucide-react';
+import { BackupActions } from '../components/BackupActions';
 import { QRCodeSVG } from 'qrcode.react';
 // 直接用 Html5Qrcode 控制後置鏡頭
 import { Html5Qrcode } from 'html5-qrcode';
@@ -615,8 +616,13 @@ export const SplitBill: React.FC = () => {
         style={{ background: 'linear-gradient(135deg, #065f46 0%, #059669 60%, #10b981 100%)' }}>
         <div className="pointer-events-none absolute -top-16 -right-16 w-48 h-48 rounded-full opacity-15"
           style={{ background: 'radial-gradient(circle, #fff, transparent)' }} />
-        <h2 className="text-[26px] font-black tracking-tight mb-1">分帳助手</h2>
-        <p className="text-[12px] font-medium text-emerald-100/70">多人聚餐、旅遊開支，高效結算。</p>
+        <div className="relative z-10 flex items-start justify-between">
+          <div>
+            <h2 className="text-[26px] font-black tracking-tight mb-1">分帳助手</h2>
+            <p className="text-[12px] font-medium text-emerald-100/70">多人聚餐、旅遊開支，高效結算。</p>
+          </div>
+          <BackupActions variant="compact" showDownload={false} />
+        </div>
       </div>
 
       {/* 建立 / 加入 按鈕 */}
